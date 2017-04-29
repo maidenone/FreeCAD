@@ -268,7 +268,7 @@ int PropertyContainerPy::setCustomAttributes(const char* attr, PyObject *obj)
     if (prop) {
         // Read-only attributes must not be set over its Python interface
         short Type =  getPropertyContainerPtr()->getPropertyType(prop);
-        if (Type & Prop_ReadOnly) {
+        if ((Type & Prop_ReadOnly) || prop->testStatus(Property::Immutable)) {
             std::stringstream s;
             s << "Object attribute '" << attr << "' is read-only";
             throw Py::AttributeError(s.str());
