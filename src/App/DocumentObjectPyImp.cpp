@@ -572,6 +572,13 @@ int DocumentObjectPy::setCustomAttributes(const char* attr, PyObject *obj)
     try {
         Property* prop = getDocumentObjectPtr()->getDynamicPropertyByName(attr);
         if (prop) {
+            if(prop->testStatus(Property::Immutable) ||
+               (getDocumentObjectPtr()->getPropertyType(prop) & Prop_ReadOnly))
+            {
+                std::stringstream s;
+                s << "'DocumentObject' attribute '" << attr << "' is read-only"; 
+                throw Py::AttributeError(s.str());
+            }
             prop->setPyObject(obj);
             return 1;
         }
@@ -586,7 +593,9 @@ int DocumentObjectPy::setCustomAttributes(const char* attr, PyObject *obj)
         s << "Attribute (Name: " << attr << ") error: '" << exc.what() << "' ";
         throw Py::AttributeError(s.str());
     }
-    catch (...) {
+    catch (Py::AttributeError &) {
+        throw;
+    }catch (...) {
         std::stringstream s;
         s << "Unknown error in attribute " << attr;
         throw Py::AttributeError(s.str());
@@ -596,8 +605,9 @@ int DocumentObjectPy::setCustomAttributes(const char* attr, PyObject *obj)
     Property *prop = getDocumentObjectPtr()->getPropertyByName(attr);
     if (prop) {
         // Read-only attributes must not be set over its Python interface
-        short Type =  getDocumentObjectPtr()->getPropertyType(prop);
-        if (Type & Prop_ReadOnly) {
+        if(prop->testStatus(Property::Immutable) ||
+           (getDocumentObjectPtr()->getPropertyType(prop) & Prop_ReadOnly))
+        {
             std::stringstream s;
             s << "'DocumentObject' attribute '" << attr << "' is read-only"; 
             throw Py::AttributeError(s.str());
