@@ -2495,7 +2495,9 @@ void PropertyMaterial::Restore(Base::XMLReader &reader)
 
 const char* PropertyMaterial::getEditorName(void) const
 {
-    return "";// "Gui::PropertyEditor::PropertyMaterialItem";
+    if(testStatus(MaterialEdit))
+        return "Gui::PropertyEditor::PropertyMaterialItem";
+    return "";
 }
 
 Property *PropertyMaterial::Copy(void) const
@@ -2617,6 +2619,8 @@ void PropertyMaterialList::RestoreDocFile(Base::Reader &reader)
 
 const char* PropertyMaterialList::getEditorName(void) const
 {
+    if(testStatus(NoMaterialListEdit))
+        return "";
     return "Gui::PropertyEditor::PropertyMaterialListItem";
 }
 
