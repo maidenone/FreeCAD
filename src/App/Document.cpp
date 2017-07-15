@@ -1691,7 +1691,7 @@ bool Document::save (void)
 }
 
 // Open the document
-void Document::restore (void)
+void Document::restore (bool delaySignal)
 {
     // clean up if the document is not empty
     // !TODO mind exeptions while restoring!
@@ -1741,6 +1741,11 @@ void Document::restore (void)
     signalRestoreDocument(reader);
     reader.readFiles(zipstream);
 
+    if(!delaySignal)
+        afterRestore();
+}
+
+void Document::afterRestore(bool checkXLink) {
     // reset all touched
     for (std::map<std::string,DocumentObject*>::iterator It= d->objectMap.begin();It!=d->objectMap.end();++It) {
         It->second->connectRelabelSignals();
@@ -1751,7 +1756,22 @@ void Document::restore (void)
         catch (const Base::Exception& e) {
             Base::Console().Error("Error in %s: %s\n", It->second->Label.getValue(), e.what());
         }
-        It->second->purgeTouched();
+
+        bool purge = true;
+        if(checkXLink) {
+            std::vector<Property*> props;
+            It->second->getPropertyList(props);
+            for(auto prop : props) {
+                if(prop->isDerivedFrom(PropertyXLink::getClassTypeId()) &&
+                !static_cast<PropertyXLink*>(prop)->isRestored())
+                {
+                    purge = false;
+                    break;
+                }
+            }
+        }
+        if(purge)
+            It->second->purgeTouched();
     }
 
     GetApplication().signalFinishRestoreDocument(*this);
