@@ -90,6 +90,8 @@ public:
     int setElementVisible(const char *, bool);
     //@}
 
+    ValueT canRemoveChildrenFromRoot() const;
+
     /** @name Drag and drop */
     //@{
     /// Returns true if the view provider generally supports dragging objects
@@ -376,6 +378,17 @@ public:
         return ret;
     }
     //@}
+
+    virtual bool canRemoveChildrenFromRoot() const override {
+        switch(imp->canRemoveChildrenFromRoot()) {
+        case ViewProviderPythonFeatureImp::NotImplemented:
+            return ViewProviderT::canRemoveChildrenFromRoot();
+        case ViewProviderPythonFeatureImp::Accepted:
+            return true;
+        default:
+            return false;
+        }
+    }
 
     /** @name Access properties */
     //@{
