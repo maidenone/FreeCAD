@@ -1196,6 +1196,71 @@ bool ViewProviderPythonFeatureImp::isShow() const
     return false;
 }
 
+ViewProviderPythonFeatureImp::ValueT 
+ViewProviderPythonFeatureImp::hasChildElement() const {
+    Base::PyGILStateLocker lock;
+    try {
+        App::Property* proxy = object->getPropertyByName("Proxy");
+        if (proxy && proxy->getTypeId() == App::PropertyPythonObject::getClassTypeId()) {
+            Py::Object vp = static_cast<App::PropertyPythonObject*>(proxy)->getValue();
+            if (vp.hasAttr(std::string("hasChildElement"))) {
+                Py::Callable method(vp.getAttr(std::string("hasChildElement")));
+                Py::Tuple args;
+                Py::Boolean ok(method.apply(args));
+                return static_cast<bool>(ok) ? Accepted : Rejected;
+            }
+        }
+    }
+    catch (Py::Exception&) {
+        Base::PyException e; // extract the Python error text
+        e.ReportException();
+    }
+
+    return NotImplemented;
+}
+
+int ViewProviderPythonFeatureImp::isElementVisible(const char *element) const {
+    Base::PyGILStateLocker lock;
+    try {
+        App::Property* proxy = object->getPropertyByName("Proxy");
+        if (proxy && proxy->getTypeId() == App::PropertyPythonObject::getClassTypeId()) {
+            Py::Object vp = static_cast<App::PropertyPythonObject*>(proxy)->getValue();
+            if (vp.hasAttr(std::string("isElementVisible"))) {
+                Py::Callable method(vp.getAttr(std::string("isElementVisible")));
+                Py::TupleN args(Py::String(element?element:""));
+                long ret = Py::Int(method.apply(args));
+                return ret;
+            }
+        }
+    }
+    catch (Py::Exception&) {
+        Base::PyException e; // extract the Python error text
+        e.ReportException();
+    }
+    return -2;
+}
+
+int ViewProviderPythonFeatureImp::setElementVisible(const char *element, bool visible) {
+    Base::PyGILStateLocker lock;
+    try {
+        App::Property* proxy = object->getPropertyByName("Proxy");
+        if (proxy && proxy->getTypeId() == App::PropertyPythonObject::getClassTypeId()) {
+            Py::Object vp = static_cast<App::PropertyPythonObject*>(proxy)->getValue();
+            if (vp.hasAttr(std::string("setElementVisible"))) {
+                Py::Callable method(vp.getAttr(std::string("setElementVisible")));
+                Py::TupleN args(Py::String(element?element:""),Py::Boolean(visible));
+                long ret = Py::Int(method.apply(args));
+                return ret;
+            }
+        }
+    }
+    catch (Py::Exception&) {
+        Base::PyException e; // extract the Python error text
+        e.ReportException();
+    }
+
+    return -2;
+}
 
 // ---------------------------------------------------------
 

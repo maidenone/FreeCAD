@@ -86,6 +86,10 @@ public:
 
     virtual bool extensionGetElementPicked(const SoPickedPoint *, std::string &) const {return false;}
     virtual bool extensionGetDetailPath(const char *, SoFullPath *, SoDetail *&) const {return false;}
+
+    virtual int extensionSetElementVisible(const char *, bool) {return -1;}
+    virtual int extensionIsElementVisible(const char *) {return -1;}
+    virtual bool extensionHasChildElement() const {return false;}
     
 private:
   //Gui::ViewProviderDocumentObject* m_viewBase = nullptr;

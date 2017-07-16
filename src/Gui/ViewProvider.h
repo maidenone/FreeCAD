@@ -285,11 +285,32 @@ public:
     virtual bool isShow(void) const;
     void setVisible(bool);
     bool isVisible() const;
+
+    /* Set sub-element visibility
+     * 
+     * For performance reason, \c element must not contain any further
+     * sub-elements, i.e. there should be no '.' inside \c element.
+     *
+     * @return -1 if element visiblity is not supported, 0 if element is not
+     * found, 1 if success
+     */
+    virtual int setElementVisible(const char *element, bool visible); 
+
+    /** Get sub-element visibility
+     *
+     * @return -1 if element visiblity is not supported or element not found, 0
+     * if element is invisible, or else 1
+     */
+    virtual int isElementVisible(const char *element) const;
+
+    /// return true to activate tree view group object handling and element visibility
+    virtual bool hasChildElement() const;
+
+
     /// Overrides the display mode with mode.
     virtual void setOverrideMode(const std::string &mode);
     const std::string getOverrideMode();
     //@}
-
 
     /** @name Edit methods
      * if the Viewprovider goes in edit mode

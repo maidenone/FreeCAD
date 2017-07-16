@@ -860,3 +860,31 @@ bool ViewProvider::useNewSelectionModel() const {
     return useNewModel>0;
 }
 
+int ViewProvider::setElementVisible(const char *element, bool visible) {
+    auto vector = getExtensionsDerivedFromType<Gui::ViewProviderExtension>();
+    for(Gui::ViewProviderExtension* ext : vector){
+        int ret = ext->extensionSetElementVisible(element,visible);
+        if(ret>=0) return ret;
+    }
+
+    return -1;
+}
+
+int ViewProvider::isElementVisible(const char *element) const {
+    auto vector = getExtensionsDerivedFromType<Gui::ViewProviderExtension>();
+    for(Gui::ViewProviderExtension* ext : vector){
+        int ret = ext->extensionIsElementVisible(element);
+        if(ret>=0) return ret;
+    }
+
+    return -1;
+}
+
+bool ViewProvider::hasChildElement() const {
+    auto vector = getExtensionsDerivedFromType<Gui::ViewProviderExtension>();
+    for(Gui::ViewProviderExtension* ext : vector){
+        if(ext->extensionHasChildElement())
+            return true;
+    }
+    return false;
+}

@@ -82,6 +82,12 @@ public:
     std::vector<std::string> getDisplayModes(void) const;
     /// set the display mode
     std::string setDisplayMode(const char* ModeName);
+    /// return true to activate tree view group object handling
+    ValueT hasChildElement() const;
+    /// Get sub-element visibility
+    int isElementVisible(const char *) const;
+    /// Set sub-element visibility
+    int setElementVisible(const char *, bool);
     //@}
 
     /** @name Drag and drop */
@@ -344,6 +350,31 @@ public:
         std::string mask = imp->setDisplayMode(ModeName);
         ViewProviderT::setDisplayMaskMode(mask.c_str());
         ViewProviderT::setDisplayMode(ModeName);
+    }
+    /// return true to activate tree view group object handling
+    virtual bool hasChildElement() const override {
+        switch(imp->hasChildElement()) {
+        case ViewProviderPythonFeatureImp::NotImplemented:
+            return ViewProviderT::hasChildElement();
+        case ViewProviderPythonFeatureImp::Accepted:
+            return true;
+        default:
+            return false;
+        }
+    }
+    /// Get sub-element visibility
+    virtual int isElementVisible(const char *element) const override {
+        int ret = imp->isElementVisible(element);
+        if(ret == -2)
+            return ViewProviderT::isElementVisible(element);
+        return ret;
+    }
+    /// Set sub-element visibility
+    virtual int setElementVisible(const char *element, bool visible) override {
+        int ret = imp->setElementVisible(element,visible);
+        if(ret == -2)
+            return ViewProviderT::setElementVisible(element,visible);
+        return ret;
     }
     //@}
 
