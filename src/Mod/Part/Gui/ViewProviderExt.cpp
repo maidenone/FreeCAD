@@ -441,7 +441,7 @@ void ViewProviderPartExt::onChanged(const App::Property* prop)
     }
     else {
         // if the object was invisible and has been changed, recreate the visual
-        if (prop == &Visibility && Visibility.getValue() && VisualTouched) {
+        if (prop == &Visibility && (isUpdateForced() || Visibility.getValue()) && VisualTouched) {
             updateVisual(feature->Shape.getValue());
             // The material has to be checked again (#0001736)
             onChanged(&DiffuseColor);
@@ -869,6 +869,15 @@ void ViewProviderPartExt::unsetEdit(int ModNum)
     else {
         Gui::ViewProviderGeometryObject::unsetEdit(ModNum);
     }
+}
+
+void ViewProviderPartExt::forceUpdate() {
+    if(!VisualTouched) return;
+    Part::Feature* feature = dynamic_cast<Part::Feature*>(pcObject);
+    if(!feature) return;
+    const TopoDS_Shape &shape = feature->Shape.getValue();
+    if(shape.IsNull()) return;
+    updateVisual(shape);
 }
 
 void ViewProviderPartExt::updateVisual(const TopoDS_Shape& inputShape)

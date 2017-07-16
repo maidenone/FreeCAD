@@ -99,6 +99,8 @@ public:
 
     virtual void updateData(const App::Property*);
 
+    void forceUpdate() override;
+
     /** @name Selection handling
      * This group of methods do the selection handling.
      * Here you can define how the selection for your ViewProfider

@@ -87,6 +87,15 @@ public:
     /// Get the python wrapper for that ViewProvider
     PyObject* getPyObject();
 
+    /// Force update visual
+    /// This method exists because some view provider skips visual update when
+    /// hidden (e.g. PartGui::ViewProviderPartExt). Call this function to force
+    /// visual update.
+    bool isUpdateForced() const {
+        return forceUpdateCount>0;
+    }
+    void forceUpdate(bool enable = true);
+
     /** @name Restoring view provider from document load */
     //@{
     virtual void startRestoring();
@@ -153,6 +162,7 @@ protected:
 private:
     std::vector<const char*> aDisplayEnumsArray;
     std::vector<std::string> aDisplayModesArray;
+    int forceUpdateCount;
 };
 
 

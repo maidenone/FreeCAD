@@ -54,6 +54,7 @@ PROPERTY_SOURCE(Gui::ViewProviderDocumentObject, Gui::ViewProvider)
 
 ViewProviderDocumentObject::ViewProviderDocumentObject()
   : pcObject(0)
+  , forceUpdateCount(0)
 {
     ADD_PROPERTY(DisplayMode,((long)0));
     ADD_PROPERTY(Visibility,(true));
@@ -157,6 +158,14 @@ void ViewProviderDocumentObject::updateView()
         updateData(it->second);
     }
     if (vis) ViewProvider::show();
+}
+
+void ViewProviderDocumentObject::forceUpdate(bool enable) {
+    if(enable) {
+        if(++forceUpdateCount == 1)
+            Visibility.touch();
+    }else if(forceUpdateCount)
+        --forceUpdateCount;
 }
 
 void ViewProviderDocumentObject::attach(App::DocumentObject *pcObj)
