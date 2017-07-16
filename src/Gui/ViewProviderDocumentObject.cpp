@@ -57,6 +57,7 @@ ViewProviderDocumentObject::ViewProviderDocumentObject()
 {
     ADD_PROPERTY(DisplayMode,((long)0));
     ADD_PROPERTY(Visibility,(true));
+    ADD_PROPERTY(ShowInTree,(true));
 
     sPixmap = "Feature";
 }
@@ -308,3 +309,8 @@ ViewProviderDocumentObject *ViewProviderDocumentObject::getLinkedView(bool recur
     }
     return const_cast<ViewProviderDocumentObject*>(this);
 }
+
+bool ViewProviderDocumentObject::showInTree() const {
+    return ShowInTree.getValue();
+}
+
