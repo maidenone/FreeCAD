@@ -111,7 +111,6 @@ public:
     /** Add an object with full quanlified name to the view provider by drag and drop */
     ValueT dropObjectEx(App::DocumentObject *obj, App::DocumentObject *, const char *);
     //@}
-
 private:
     ViewProviderDocumentObject* object;
 };

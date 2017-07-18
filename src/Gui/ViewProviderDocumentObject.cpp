@@ -297,3 +297,14 @@ bool ViewProviderDocumentObject::canDropObjectEx(
         return false;
     return canDropObject(obj);
 }
+
+ViewProviderDocumentObject *ViewProviderDocumentObject::getLinkedView(bool recursive, int depth) const{
+    if(pcObject && pcObject->getNameInDocument()) {
+        auto link = pcObject->getLinkedObject(recursive,0,false,depth);
+        if(link && link!=pcObject) {
+            auto ret = Application::Instance->getLinkedViewOfType<ViewProviderDocumentObject>(link);
+            if(ret) return ret;
+        }
+    }
+    return const_cast<ViewProviderDocumentObject*>(this);
+}

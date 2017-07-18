@@ -52,6 +52,7 @@
 #endif
 
 #include "ViewProviderPythonFeature.h"
+#include "ViewProviderDocumentObjectPy.h"
 #include "Tree.h"
 #include "Window.h"
 #include "Application.h"

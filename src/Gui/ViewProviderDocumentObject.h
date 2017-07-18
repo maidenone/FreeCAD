@@ -90,6 +90,18 @@ public:
     virtual void finishRestoring();
     //@}
 
+    /** Return the linked view provider
+     *
+     * Set 'recursive' to true to return the final linked view provider. 
+     * Otherwise only the immediate view provider is returned.
+     *
+     * The default implementation calls DocumentObject::getLinkedObject()
+     *
+     * @note IMPORTANT, when the view provider is linked, it must return itself
+     * instead of 0
+     */
+    virtual ViewProviderDocumentObject *getLinkedView(bool recursive, int depth=0) const;
+
 protected:
     /*! Get the active mdi view of the document this view provider is part of.
       @note The returned mdi view doesn't need to be a 3d view but can be e.g.

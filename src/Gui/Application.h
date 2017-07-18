@@ -157,6 +157,13 @@ public:
     Gui::ViewProvider* getViewProvider(const App::DocumentObject*) const;
     //@}
 
+    template<class T> 
+    T *getLinkedViewOfType(const App::DocumentObject *obj) const {
+        return static_cast<T*>(getLinkedViewOfType(obj,T::getClassTypeId()));
+    }
+
+    Gui::ViewProvider *getLinkedViewOfType(const App::DocumentObject *obj, Base::Type type) const;
+
     /// true when the application shuting down
     bool isClosing(void);
     void checkForPreviousCrashes();

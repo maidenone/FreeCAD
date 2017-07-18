@@ -907,6 +907,17 @@ Gui::ViewProvider* Application::getViewProvider(const App::DocumentObject* obj) 
     return 0;
 }
 
+Gui::ViewProvider *Application::getLinkedViewOfType(const App::DocumentObject *obj, Base::Type type) const
+{
+    auto vp = getViewProvider(obj);
+    if(!vp || !vp->isDerivedFrom(ViewProviderDocumentObject::getClassTypeId()))
+        return nullptr;
+    auto vpd = static_cast<ViewProviderDocumentObject*>(vp)->getLinkedView(true);
+    if(vpd && vpd->isDerivedFrom(type))
+        return vpd;
+    return nullptr;
+}
+
 void Application::attachView(Gui::BaseView* pcView)
 {
     d->passive.push_back(pcView);

@@ -55,6 +55,20 @@ PyObject* ViewProviderDocumentObjectPy::update(PyObject *args)
     } PY_CATCH;
 }
 
+PyObject* ViewProviderDocumentObjectPy::getLinkedView(PyObject *args)
+{
+    PyObject *recursive = Py_False;
+    short depth = 0;
+    if (!PyArg_ParseTuple(args, "|Oh", &recursive, &depth))     // convert args: Python->C 
+        return NULL;                       // NULL triggers exception 
+    PY_TRY {
+        auto ret = getViewProviderDocumentObjectPtr()->getLinkedView(
+                PyObject_IsTrue(recursive),depth);
+        assert(ret);
+        return ret->getPyObject();
+    } PY_CATCH;
+}
+
 Py::Object ViewProviderDocumentObjectPy::getObject(void) const
 {
     App::DocumentObject* obj = getViewProviderDocumentObjectPtr()->getObject();

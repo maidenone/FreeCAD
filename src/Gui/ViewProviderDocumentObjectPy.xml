@@ -18,6 +18,11 @@
 				<UserDocu>Update the view representation of the object</UserDocu>
 			</Documentation>
 		</Methode>
+		<Methode Name="getLinkedView">
+			<Documentation>
+                <UserDocu>getLinkedView(recursive=True, depth=0): get the linked view object</UserDocu>
+			</Documentation>
+		</Methode>
 		<Attribute Name="Object" ReadOnly="true">
 			<Documentation>
 				<UserDocu>Return the associated data object</UserDocu>
