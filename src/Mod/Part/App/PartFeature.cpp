@@ -56,6 +56,7 @@
 
 #include "PartFeature.h"
 #include "PartFeaturePy.h"
+#include "TopoShapePy.h"
 
 using namespace Part;
 
@@ -129,7 +130,7 @@ App::DocumentObject *Feature::getSubObject(const char *subname, const char **sub
     try {
         TopoDS_Shape shape = Shape.getValue().Located(TopLoc_Location());
         TopoShape ts = (subname==0||*subname==0)?shape:TopoShape(shape).getSubShape(subname);
-        if(pmat && ts.isNull()) 
+        if(pmat && !ts.isNull()) 
             ts.transformShape(*pmat,false,true);
         *pyObj =  Py::new_reference_to(shape2pyshape(ts.getShape()));
         return const_cast<Feature*>(this);
@@ -142,6 +143,65 @@ App::DocumentObject *Feature::getSubObject(const char *subname, const char **sub
         else     {str += "No OCCT Exception Message";}
         throw Base::Exception(str.c_str());
     }
+}
+
+TopoDS_Shape Feature::getShape(const App::DocumentObject *obj, const char *subname, 
+    bool needSubElement, Base::Matrix4D *pmat, App::DocumentObject **powner, bool resolveLink)
+{
+    if(!obj) return TopoDS_Shape();
+
+    PyObject *pyobj = 0;
+    Base::Matrix4D mat;
+    if(pmat) mat = *pmat;
+    App::DocumentObject *owner;
+
+    if(needSubElement || !subname || !*subname) 
+        owner = obj->getSubObject(subname,0,&pyobj,&mat);
+    else {
+        const char *subelement = 0;
+        // first obtain sub-object without requesting for PyObject to skip
+        // possible sub-element
+        owner = obj->getSubObject(subname,&subelement,0,&mat);
+        if(owner) {
+            // now directly request pyobj from the sub object with the
+            // accumulated matrix returned above, without applying the sub
+            // object's own transformation, because it is already inside mat
+            owner->getSubObject(0,0,&pyobj,&mat,false);
+        }
+    }
+
+    if(powner) {
+        if(owner && resolveLink) {
+            auto linked = owner->getLinkedObject(true);
+            if(linked)
+                owner = linked;
+        }
+        *powner = owner;
+    }
+    if(pmat)
+        *pmat = mat;
+
+    if(!pyobj || !PyObject_TypeCheck(pyobj,&TopoShapePy::Type)) {
+        Py_XDECREF(pyobj);
+        return TopoDS_Shape();
+    }
+
+    auto shape = static_cast<TopoShapePy*>(pyobj)->getTopoShapePtr()->getShape();
+    Py_DECREF(pyobj);
+    return shape;
+}
+
+App::DocumentObject *Part::Feature::getShapeOwner(const App::DocumentObject *obj, 
+        const char *subname, const char **subelement)
+{
+    if(!obj) return 0;
+    auto owner = obj->getSubObject(subname,subelement);
+    if(owner) {
+        auto linked = owner->getLinkedObject(true);
+        if(linked)
+            owner = linked;
+    }
+    return owner;
 }
 
 void Feature::onChanged(const App::Property* prop)

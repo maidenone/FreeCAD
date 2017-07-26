@@ -526,12 +526,12 @@ std::string Command::assureWorkbench(const char * sName)
 
 void Command::copyVisual(const char* to, const char* attr, const char* from)
 {
-    doCommand(Gui,"Gui.ActiveDocument.%s.%s=Gui.ActiveDocument.%s.%s", to, attr, from, attr);
+    doCommand(Gui,"Gui.ActiveDocument.%s.%s=Gui.ActiveDocument.%s.getLinkedView().%s", to, attr, from, attr);
 }
 
 void Command::copyVisual(const char* to, const char* attr_to, const char* from, const char* attr_from)
 {
-    doCommand(Gui,"Gui.ActiveDocument.%s.%s=Gui.ActiveDocument.%s.%s", to, attr_to, from, attr_from);
+    doCommand(Gui,"Gui.ActiveDocument.%s.%s=Gui.ActiveDocument.%s.getLinkedView().%s", to, attr_to, from, attr_from);
 }
 
 std::string Command::getPythonTuple(const std::string& name, const std::vector<std::string>& subnames)
