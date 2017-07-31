@@ -310,14 +310,13 @@ public:
      * @param pObject: the top parent object
      * @param subname: dot separated subname
      * @param parent: return the direct parent of the object
-     * @param subelement: return the non-object-element referred in subname
      *
      * @return Returns the last referenced document object in the subname. If no
      * such object in subname, return pObject.
      * @
      */
     static App::DocumentObject *resolveObject(App::DocumentObject *pObject, 
-        const char *subname, App::DocumentObject **parent=0, const char **subelement=0);
+        const char *subname, App::DocumentObject **parent=0);
 
     /** Set selection object visibility
      *
