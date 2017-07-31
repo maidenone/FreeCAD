@@ -110,13 +110,13 @@ namespace Part {
 Py::Object shape2pyshape(const TopoDS_Shape &shape);
 }
 
-App::DocumentObject *Feature::getSubObject(const char *subname, const char **subelement, 
+App::DocumentObject *Feature::getSubObject(const char *subname, 
         PyObject **pyObj, Base::Matrix4D *pmat, bool transform, int depth) const
 {
-    auto ret = App::DocumentObject::getSubObject(subname,subelement,pyObj,pmat,transform,depth);
-    if(ret && ret!=this) return ret;
-
-    if(subelement) *subelement = subname;
+    // having '.' inside subname means it is referencing some children object,
+    // instead of any sub-element from ourself
+    if(subname && strrchr(subname,'.')) 
+        return App::DocumentObject::getSubObject(subname,pyObj,pmat,transform,depth);
 
     if(pmat && transform)
         *pmat *= Placement.getValue().toMatrix();
@@ -156,17 +156,16 @@ TopoDS_Shape Feature::getShape(const App::DocumentObject *obj, const char *subna
     App::DocumentObject *owner;
 
     if(needSubElement || !subname || !*subname) 
-        owner = obj->getSubObject(subname,0,&pyobj,&mat);
+        owner = obj->getSubObject(subname,&pyobj,&mat);
     else {
-        const char *subelement = 0;
         // first obtain sub-object without requesting for PyObject to skip
         // possible sub-element
-        owner = obj->getSubObject(subname,&subelement,0,&mat);
+        owner = obj->getSubObject(subname,0,&mat);
         if(owner) {
             // now directly request pyobj from the sub object with the
             // accumulated matrix returned above, without applying the sub
             // object's own transformation, because it is already inside mat
-            owner->getSubObject(0,0,&pyobj,&mat,false);
+            owner->getSubObject(0,&pyobj,&mat,false);
         }
     }
 
@@ -191,11 +190,10 @@ TopoDS_Shape Feature::getShape(const App::DocumentObject *obj, const char *subna
     return shape;
 }
 
-App::DocumentObject *Part::Feature::getShapeOwner(const App::DocumentObject *obj, 
-        const char *subname, const char **subelement)
+App::DocumentObject *Part::Feature::getShapeOwner(const App::DocumentObject *obj, const char *subname)
 {
     if(!obj) return 0;
-    auto owner = obj->getSubObject(subname,subelement);
+    auto owner = obj->getSubObject(subname);
     if(owner) {
         auto linked = owner->getLinkedObject(true);
         if(linked)

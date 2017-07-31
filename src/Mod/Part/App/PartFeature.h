@@ -64,8 +64,8 @@ public:
 
     virtual PyObject* getPyObject(void);
 
-    virtual DocumentObject *getSubObject(const char *subname, const char **subelement, 
-            PyObject **pyObj, Base::Matrix4D *mat, bool transform, int depth) const override;
+    virtual DocumentObject *getSubObject(const char *subname, PyObject **pyObj, 
+            Base::Matrix4D *mat, bool transform, int depth) const override;
 
     /** Convenience function to extract shape from fully qualified subname 
      *
@@ -88,8 +88,7 @@ public:
             const char *subname=0, bool needSubElement=false, Base::Matrix4D *pmat=0, 
             App::DocumentObject **owner=0, bool resolveLink=true);
 
-    static App::DocumentObject *getShapeOwner(const App::DocumentObject *obj, 
-            const char *subname=0, const char **subelement=0);
+    static App::DocumentObject *getShapeOwner(const App::DocumentObject *obj, const char *subname=0);
 
     static bool hasShapeOwner(const App::DocumentObject *obj, const char *subname=0) {
         auto owner = getShapeOwner(obj,subname);
