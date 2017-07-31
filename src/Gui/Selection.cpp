@@ -494,9 +494,18 @@ App::DocumentObject *SelectionSingleton::getObjectOfType(App::DocumentObject *pO
         *subelement = subname;
     if(resolve) {
         if(subname && *subname) {
-            ret = ret->getSubObject(subname,subelement);
-            if(!ret || !ret->getNameInDocument()) 
-                return 0;
+            const char *dot = strrchr(subname,'.');
+            if(subelement) {
+                if(!dot)
+                    *subelement = "";
+                else
+                    *subelement = dot+1;
+            }
+            if(dot) {
+                ret = ret->getSubObject(subname);
+                if(!ret || !ret->getNameInDocument()) 
+                    return 0;
+            }
         }
         auto linked = ret->getLinkedObject(true);
         if(linked && linked->isDerivedFrom(type))
@@ -958,10 +967,10 @@ void SelectionSingleton::rmvSelection(const char* pDocName, const char* pObjectN
         // if no object name is specified, remove all objects
         if(pObjectName && *pObjectName && It->FeatName!=pObjectName) continue;
         // if no subname is specified, remove all subobjects of the matching object
-        if(pSubName && *pSubName) {
+        if(len) {
             // otherwise, match subojects with common prefix, separated by '.'
             if(std::strncmp(It->SubName.c_str(),pSubName,len)!=0 ||
-               (It->SubName.length()!=len && It->SubName[len]!='.'))
+               (It->SubName.length()!=len && It->SubName[len-1]!='.'))
                 continue;
         }
 
@@ -993,42 +1002,47 @@ void SelectionSingleton::rmvSelection(const char* pDocName, const char* pObjectN
     }
 }
 
-App::DocumentObject *SelectionSingleton::resolveObject(App::DocumentObject *pObject, 
-        const char *subname, App::DocumentObject **parent, const char **subelement)
+App::DocumentObject *SelectionSingleton::resolveObject(
+        App::DocumentObject *pObject, const char *subname, 
+        App::DocumentObject **parent, std::string *elementName)
 {
-    const char *_subelement=0;
-    if(!subelement)
-        subelement = &_subelement;
-
     if(parent) *parent = 0;
     if(!pObject || !subname || *subname==0)
         return pObject;
 
-    auto obj = pObject->getSubObject(subname,subelement);
-    if(!obj || obj == pObject || !parent)
+    auto obj = pObject->getSubObject(subname);
+    if(!obj || obj == pObject)
         return pObject;
+
+    if(!parent)
+        return obj;
+
+    // NOTE, the convension of '.' separated SubName demands a mandatory ending
+    // '.' for each object name in SubName, even if there is no subelement
+    // following it. So finding the last dot will give us the end of the last
+    // object name.
+    const char *dot = strrchr(subname,'.');
+    if(!dot || dot == subname)
+        return obj; // this means no parent object reference in SubName
 
     *parent = pObject;
 
-    const char *end;
-    if(*subelement==0 || (*subelement)[0]==0) {
-        // no non-object subelement, so search the last dot for the last parent
-        // object name
-        end = strrchr(subname,'.');
-        if(!end) 
-            return obj;
-    }else {
-        // has non-object subelement, so subelement-2 will be the end of the
-        // last object's name. Search forward for the last dot.
-        for(end=(*subelement)-2;end>subname&&*end!='.';--end);
-        if(end<subname) // will this happend?
-            return obj;
+    const char *lastDot = dot;
+    for(--dot;dot!=subname;--dot) {
+        // check for the second last dot, which is the end of the last parent object
+        if(*dot == '.') {
+            // We can't get parent object by its name, because the object may be
+            // externally linked (i.e. in a different document). So go through
+            // getSubObject again.
+            *parent = pObject->getSubObject(std::string(subname,dot-subname+1).c_str());
+            break;
+        }
     }
-
-    // We can't get parent object by its name, because the object may be
-    // externally linked (i.e. in a different document). So go through
-    // getSubObject again.
-    *parent = pObject->getSubObject(std::string(subname,end-subname).c_str());
+    if(elementName) {
+        if(dot!=lastDot && *dot == '.')
+            ++dot;
+        *elementName = std::string(dot,lastDot-dot);
+    }
     return obj;
 }
 
@@ -1043,17 +1057,17 @@ void SelectionSingleton::setVisible(int visible) const {
             continue;
         // get parent object
         App::DocumentObject *parent = 0;
-        auto obj = Selection().resolveObject(sel.pObject,sel.SubName.c_str(),&parent);
+        std::string elementName;
+        auto obj = Selection().resolveObject(sel.pObject,sel.SubName.c_str(),&parent,&elementName);
         if(!obj || !obj->getNameInDocument() || (parent && !parent->getNameInDocument()))
             continue;
         // try call parent object's setElementVisibility
-        if(parent && parent->hasChildElement()) {
+        if(parent) {
             // prevent setting the same object visibility more than once
             if(!filter.insert(std::make_pair(obj,parent)).second)
                 continue;
 
-            const char *sub = obj->getNameInDocument();
-            int vis = parent->isElementVisible(sub);
+            int vis = parent->isElementVisible(elementName.c_str());
             if(vis>=0) {
                 if(vis>0) vis = 1;
                 if(visible>=0) {
@@ -1063,7 +1077,7 @@ void SelectionSingleton::setVisible(int visible) const {
                 }else
                     vis = !vis;
 
-                parent->setElementVisible(sub,vis?true:false);
+                parent->setElementVisible(elementName.c_str(),vis?true:false);
                 continue;
             }
 
@@ -1253,12 +1267,11 @@ const char *SelectionSingleton::getSelectedElement(App::DocumentObject *obj, con
 
     for(list<_SelObj>::const_iterator It = _SelList.begin();It != _SelList.end();++It) {
         if (It->pObject == obj) {
-            if (!pSubName || *pSubName==0 || It->SubName.empty()) {
-                if(It->SubName.empty())
-                    return It->SubName.c_str();
-            }else if(strncmp(pSubName,It->SubName.c_str(),It->SubName.length())==0){
-                char c = pSubName[It->SubName.length()];
-                if(c=='.' || c==0)
+            auto len = It->SubName.length();
+            if(!len)
+                return "";
+            if (pSubName && strncmp(pSubName,It->SubName.c_str(),It->SubName.length())==0){
+                if(pSubName[len]==0 || pSubName[len-1] == '.')
                     return It->SubName.c_str();
             }
         }
@@ -1414,10 +1427,10 @@ PyMethodDef SelectionSingleton::Methods[] = {
      "removeSelectionGate() -- remove the active selection gate\n"},
     {"resolveObject",            (PyCFunction) SelectionSingleton::sResolveObject, 1, 
      "resolveObject(object, subname) -- resolve the sub object\n"
-     "Returns a tuple (subobject,parent,subelement), where 'subobject' is the last\n"
-     "object referenced in 'subname', and 'parent' is the direct parent of 'subobject'.\n"
-     "'subelement' is the non-object-element referenced in 'subname'. If no parent or\n"
-     "subelement exists, they can be None"},
+     "Returns a tuple (subobj,parent,elementName), where 'subobj' is the last\n"
+     "object referenced in 'subname', and 'parent' is the direct parent of 'subobj',\n"
+     "and elementName is the child name of the subobj, which can be used to call\n"
+     "parent.isElementVisible/setElementVisible()"},
     {"setVisible",            (PyCFunction) SelectionSingleton::sSetVisible, 1, 
      "setVisible(visible=None) -- set visibility of all selection items\n"
      "If 'visible' is None, then toggle visibility"},
@@ -1777,16 +1790,16 @@ PyObject *SelectionSingleton::sResolveObject(PyObject * /*self*/, PyObject *args
         return NULL;                             // NULL triggers exception 
 
     PY_TRY {
-        const char *subelement = 0;
+        std::string elementName;
         App::DocumentObject *parent = 0;
         auto obj = Selection().resolveObject(
             static_cast<App::DocumentObjectPy*>(pyobj)->getDocumentObjectPtr(),
-            subname,&parent,&subelement);
+            subname,&parent,&elementName);
 
         Py::Tuple ret(3);
         ret.setItem(0,Py::Object(obj->getPyObject(),true));
         ret.setItem(1,parent?Py::Object(parent->getPyObject(),true):Py::None());
-        ret.setItem(2,subelement?Py::String(subelement):Py::None());
+        ret.setItem(2,Py::String(elementName.c_str()));
         return Py::new_reference_to(ret);
     } PY_CATCH;
 
