@@ -379,7 +379,6 @@ PyObject*  DocumentObjectPy::getSubObject(PyObject *args, PyObject *keywds)
     struct SubInfo {
         PyObject *obj;
         PyObject *pyObj;
-        std::string subname;
         Base::Matrix4D mat;
         SubInfo(const Base::Matrix4D &mat):obj(Py_None),pyObj(Py_None),mat(mat)
         {}
@@ -396,14 +395,11 @@ PyObject*  DocumentObjectPy::getSubObject(PyObject *args, PyObject *keywds)
 
     std::vector<SubInfo> ret;
     for(const auto &sub : subs) {
-        const char *subname = 0;
         SubInfo info(mat);
         auto obj = getDocumentObjectPtr()->getSubObject(
-                sub.c_str(),&subname,retType==1?0:&info.pyObj,&info.mat,transform,depth);
-        if(obj) {
-            if(subname) info.subname = subname;
+                sub.c_str(),retType==1?0:&info.pyObj,&info.mat,transform,depth);
+        if(obj) 
             info.obj = obj->getPyObject();
-        }
         ret.push_back(info);
     }
     if(ret.empty())
@@ -415,12 +411,11 @@ PyObject*  DocumentObjectPy::getSubObject(PyObject *args, PyObject *keywds)
                 Py_Return;
             return ret[0].pyObj;
         }
-        Py::Tuple rret(retType==1?3:4);
+        Py::Tuple rret(retType==1?2:3);
         rret.setItem(0,Py::Object(ret[0].obj,ret[0].obj!=Py_None));
-        rret.setItem(1,Py::String(ret[0].subname));
-        rret.setItem(2,Py::Object(new Base::MatrixPy(ret[0].mat)));
+        rret.setItem(1,Py::Object(new Base::MatrixPy(ret[0].mat)));
         if(retType!=1)
-            rret.setItem(3,Py::Object(ret[0].pyObj,ret[0].pyObj!=Py_None));
+            rret.setItem(2,Py::Object(ret[0].pyObj,ret[0].pyObj!=Py_None));
         return Py::new_reference_to(rret);
     }
     Py::Tuple tuple(ret.size());
@@ -428,12 +423,11 @@ PyObject*  DocumentObjectPy::getSubObject(PyObject *args, PyObject *keywds)
         if(retType==0)
             tuple.setItem(i,Py::Object(ret[i].pyObj,ret[i].pyObj!=Py_None));
         else {
-            Py::Tuple rret(retType==1?3:4);
+            Py::Tuple rret(retType==1?2:3);
             rret.setItem(0,Py::Object(ret[i].obj,ret[i].obj!=Py_None));
-            rret.setItem(1,Py::String(ret[i].subname));
-            rret.setItem(2,Py::Object(new Base::MatrixPy(ret[i].mat)));
+            rret.setItem(1,Py::Object(new Base::MatrixPy(ret[i].mat)));
             if(retType!=1)
-                rret.setItem(3,Py::Object(ret[i].pyObj,ret[i].pyObj!=Py_None));
+                rret.setItem(2,Py::Object(ret[i].pyObj,ret[i].pyObj!=Py_None));
             tuple.setItem(i,rret);
         }
     }
