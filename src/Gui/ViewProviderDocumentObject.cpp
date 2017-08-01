@@ -77,10 +77,16 @@ void ViewProviderDocumentObject::getTaskViewContent(std::vector<Gui::TaskView::T
 void ViewProviderDocumentObject::startRestoring()
 {
     hide();
+    auto vector = getExtensionsDerivedFromType<Gui::ViewProviderExtension>();
+    for(Gui::ViewProviderExtension* ext : vector)
+        ext->extensionStartRestoring();
 }
 
 void ViewProviderDocumentObject::finishRestoring()
 {
+    auto vector = getExtensionsDerivedFromType<Gui::ViewProviderExtension>();
+    for(Gui::ViewProviderExtension* ext : vector)
+        ext->extensionFinishRestoring();
 }
 
 bool ViewProviderDocumentObject::isAttachedToDocument() const
