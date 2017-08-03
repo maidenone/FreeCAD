@@ -114,6 +114,10 @@ protected Q_SLOTS:
     void onSkipRecompute(bool on);
     void onMarkRecompute();
     void onSelectAllInstances();
+    void onMakeLink();
+    void onMakeLinkSub();
+    void onReplaceWithLink();
+    void onUnlink();
     void onSelectLinked();
     void onSelectLinkedFinal();
     void onSelectAllLinks();
@@ -151,6 +155,11 @@ private:
     QAction* selectLinkedAction;
     QAction* selectLinkedFinalAction;
     QAction* selectAllLinksAction;
+    QAction* makeLinkAction;
+    QAction* makeLinkSubAction;
+    QAction* replaceWithLinkAction;
+    QAction* unlinkAction;
+    QAction* unlinkRecrsuiveAction;
     QAction* syncSelectionAction;
     QAction* syncViewAction;
     QAction* showHiddenAction;
