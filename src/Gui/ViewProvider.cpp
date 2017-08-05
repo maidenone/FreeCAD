@@ -895,3 +895,10 @@ bool ViewProvider::hasChildElement() const {
     }
     return false;
 }
+
+void ViewProvider::beforeDelete() {
+    auto vector = getExtensionsDerivedFromType<Gui::ViewProviderExtension>();
+    for(Gui::ViewProviderExtension* ext : vector)
+        ext->extensionBeforeDelete();
+}
+
