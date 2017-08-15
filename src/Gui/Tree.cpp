@@ -129,6 +129,30 @@ TreeWidget::TreeWidget(QWidget* parent)
     connect(this->selectAllInstancesAction, SIGNAL(triggered()),
             this, SLOT(onSelectAllInstances()));
 
+    this->makeLinkAction = new QAction(this);
+    connect(this->makeLinkAction, SIGNAL(triggered()),
+            this, SLOT(onMakeLink()));
+
+    this->makeLinkSubAction = new QAction(this);
+    connect(this->makeLinkSubAction, SIGNAL(triggered()),
+            this, SLOT(onMakeLinkSub()));
+
+    this->replaceWithLinkAction = new QAction(this);
+    connect(this->replaceWithLinkAction, SIGNAL(triggered()),
+            this, SLOT(onReplaceWithLink()));
+
+    this->unlinkAction = new QAction(this);
+    connect(this->unlinkAction, SIGNAL(triggered()),
+            this, SLOT(onUnlink()));
+
+    this->importLinkAction = new QAction(this);
+    connect(this->importLinkAction, SIGNAL(triggered()),
+            this, SLOT(onImportLink()));
+
+    this->importAllLinkAction = new QAction(this);
+    connect(this->importAllLinkAction, SIGNAL(triggered()),
+            this, SLOT(onImportAllLink()));
+
     this->selectLinkedAction = new QAction(this);
     connect(this->selectLinkedAction, SIGNAL(triggered()),
             this, SLOT(onSelectLinked()));
@@ -202,22 +226,28 @@ void TreeWidget::contextMenuEvent (QContextMenuEvent * e)
     Gui::Application::Instance->setupContextMenu("Tree", &view);
 
     QMenu contextMenu;
+
     QMenu subMenu;
     QMenu editMenu;
+    QMenu linkMenu;
     QActionGroup subMenuGroup(&subMenu);
     subMenuGroup.setExclusive(true);
     connect(&subMenuGroup, SIGNAL(triggered(QAction*)),
             this, SLOT(onActivateDocument(QAction*)));
     MenuManager::getInstance()->setupContextMenu(&view, contextMenu);
 
+    QAction* topact = 0;
+    auto actions = contextMenu.actions();
+    if(actions.size())
+        topact = actions.front();
+    contextMenu.insertAction(topact,this->syncSelectionAction);
+    contextMenu.insertAction(topact,this->syncViewAction);
+    contextMenu.insertSeparator(topact);
+
     // get the current item
     this->contextItem = itemAt(e->pos());
-    contextMenu.addAction(this->syncSelectionAction);
-    contextMenu.addAction(this->syncViewAction);
 
     if (this->contextItem && this->contextItem->type() == DocumentType) {
-        if (!contextMenu.actions().isEmpty())
-            contextMenu.addSeparator();
         DocumentItem* docitem = static_cast<DocumentItem*>(this->contextItem);
         App::Document* doc = docitem->document()->getDocument();
         showHiddenAction->setChecked(docitem->showHidden());
@@ -226,60 +256,129 @@ void TreeWidget::contextMenuEvent (QContextMenuEvent * e)
         contextMenu.addAction(this->skipRecomputeAction);
         contextMenu.addAction(this->markRecomputeAction);
         contextMenu.addAction(this->createGroupAction);
+        contextMenu.addSeparator();
+
+        if(App::PropertyXLink::hasXLink(doc)) {
+            linkMenu.setTitle(tr("Link actions"));
+            contextMenu.addMenu(&linkMenu);
+            linkMenu.addAction(this->importAllLinkAction);
+        }
     }
     else if (this->contextItem && this->contextItem->type() == ObjectType) {
         DocumentObjectItem* objitem = static_cast<DocumentObjectItem*>
             (this->contextItem);
-        if (objitem->object()->getObject()->isDerivedFrom(App::DocumentObjectGroup
-            ::getClassTypeId())) {
-            QList<QAction*> acts = contextMenu.actions();
-            if (!acts.isEmpty()) {
-                QAction* first = acts.front();
-                QAction* sep = contextMenu.insertSeparator(first);
-                contextMenu.insertAction(sep, this->createGroupAction);
-            }
-            else
-                contextMenu.addAction(this->createGroupAction);
-        }
-        if (!contextMenu.actions().isEmpty())
-            contextMenu.addSeparator();
-        App::Document* doc = objitem->object()->getObject()->getDocument();
-        showHiddenAction->setChecked(doc->ShowHidden.getValue());
-        contextMenu.addAction(this->showHiddenAction);
-        hideInTreeAction->setChecked(!objitem->object()->showInTree());
-        contextMenu.addAction(this->hideInTreeAction);
-        contextMenu.addAction(this->markRecomputeAction);
-        contextMenu.addAction(this->relabelObjectAction);
 
+        auto selItems = this->selectedItems();
         // if only one item is selected setup the edit menu
-        if (this->selectedItems().size() == 1) {
-            contextMenu.addAction(this->selectAllInstancesAction);
-            if(App::GetApplication().hasLinksTo(objitem->object()->getObject()))
-                contextMenu.addAction(this->selectAllLinksAction);
-            if(objitem->isLink()) {
-                contextMenu.addAction(this->selectLinkedAction);
-                if(!objitem->isLinkFinal())
-                    contextMenu.addAction(this->selectLinkedFinalAction);
-            }
-
+        if (selItems.size() == 1) {
             objitem->object()->setupContextMenu(&editMenu, this, SLOT(onStartEditing()));
             QList<QAction*> editAct = editMenu.actions();
             if (!editAct.isEmpty()) {
-                QAction* topact = contextMenu.actions().front();
                 for (QList<QAction*>::iterator it = editAct.begin(); it != editAct.end(); ++it)
-                    contextMenu.insertAction(topact, *it);
+                    contextMenu.addAction(*it);
                 QAction* first = editAct.front();
                 contextMenu.setDefaultAction(first);
                 if (objitem->object()->isEditing())
-                    contextMenu.insertAction(topact, this->finishEditingAction);
-                contextMenu.insertSeparator(topact);
+                    contextMenu.addAction(finishEditingAction);
+                contextMenu.addSeparator();
             }
         }
+
+        App::Document* doc = objitem->object()->getObject()->getDocument();
+        showHiddenAction->setChecked(doc->ShowHidden.getValue());
+        contextMenu.addAction(this->showHiddenAction);
+
+        hideInTreeAction->setChecked(!objitem->object()->showInTree());
+        contextMenu.addAction(this->hideInTreeAction);
+
+        if (objitem->object()->getObject()->isDerivedFrom(App::DocumentObjectGroup::getClassTypeId()))
+            contextMenu.addAction(this->createGroupAction);
+
+        contextMenu.addAction(this->markRecomputeAction);
+        contextMenu.addAction(this->relabelObjectAction);
+
+        linkMenu.addAction(this->makeLinkAction);
+
+        if(selItems.size()==1) {
+            contextMenu.addAction(this->selectAllInstancesAction);
+
+            if(objitem->isParentGroup()) {
+                makeLinkSubAction->setText(tr("Create link sub"));
+                linkMenu.addAction(this->makeLinkSubAction);
+            }
+            if(objitem->isLink()) {
+                linkMenu.addAction(this->selectLinkedAction);
+                if(!objitem->isLinkFinal())
+                    linkMenu.addAction(this->selectLinkedFinalAction);
+                auto linked = objitem->object()->getLinkedView(false);
+                if(linked->getDocument()==objitem->object()->getDocument()) {
+                    auto parent = objitem->getParentItem();
+                    if(parent && parent->object()->getDocument()==objitem->object()->getDocument())
+                        linkMenu.addAction(this->unlinkAction);
+                }
+            }
+
+            if(App::GetApplication().hasLinksTo(objitem->object()->getObject()))
+                linkMenu.addAction(this->selectAllLinksAction);
+
+        }else if(selItems.size()==2) {
+            auto parentItem = selItems.front()==objitem?selItems.back():selItems.front();
+            if(parentItem->type() == ObjectType) {
+                auto parent = static_cast<DocumentObjectItem*>(parentItem);
+                if(objitem->isChildOfItem(parent)) {
+                    makeLinkSubAction->setText(QString::fromLatin1("%1 %2").arg(
+                                tr("Create link relative to ")).arg(parentItem->text(0)));
+                    linkMenu.addAction(this->makeLinkSubAction);
+                }
+            }
+        }
+
+        bool importLink = false;
+        for(auto ti : selItems) {
+            if(ti->type() != ObjectType) break;
+            auto item = static_cast<DocumentObjectItem*>(ti);
+            std::vector<App::Property*> props;
+            item->object()->getObject()->getPropertyList(props);
+            for(auto prop : props) {
+                auto xlink = dynamic_cast<App::PropertyXLink*>(prop);
+                if(!xlink) continue; 
+                auto linked = xlink->getValue();
+                if(linked &&
+                   linked->getNameInDocument() &&
+                   linked->getDocument()!=doc)
+                {
+                    importLink = true;
+                    break;
+                }
+            }
+            if(importLink) {
+                linkMenu.addAction(this->importLinkAction);
+                break;
+            }
+        }
+        if(importLink || App::PropertyXLink::hasXLink(doc))
+            linkMenu.addAction(this->importAllLinkAction);
+
+        int replaceCount = 0;
+        for(auto ti : selItems) {
+            if(ti->type() != ObjectType) break;
+            auto item = static_cast<DocumentObjectItem*>(ti);
+            auto parent = item->getParentItem();
+            if(!parent || parent->object()->getDocument()!=objitem->object()->getDocument()) 
+                break;
+            ++replaceCount;
+        }
+        if(replaceCount == selItems.size())
+            linkMenu.addAction(this->replaceWithLinkAction);
+        linkMenu.setTitle(tr("Link actions"));
+        contextMenu.addMenu(&linkMenu);
     }
+
 
     // add a submenu to active a document if two or more exist
     std::vector<App::Document*> docs = App::GetApplication().getDocuments();
     if (docs.size() >= 2) {
+        contextMenu.addSeparator();
         App::Document* activeDoc = App::GetApplication().getActiveDocument();
         subMenu.setTitle(tr("Activate document"));
         contextMenu.addMenu(&subMenu);
@@ -439,33 +538,293 @@ DocumentItem *TreeWidget::getDocumentItem(const Gui::Document *doc) const {
     return 0;
 }
 
+void TreeWidget::onMakeLink() {
+    std::set<App::DocumentObject*> objs;
+    for(auto ti : this->selectedItems()) {
+        if(ti->type() != ObjectType) continue;
+        auto item = static_cast<DocumentObjectItem*>(ti);
+        auto vp = item->object();
+        auto obj = vp->getObject();
+        if(obj && obj->getNameInDocument())
+            objs.insert(obj);
+    }
+
+    auto doc = App::GetApplication().getActiveDocument();
+    if(!doc) return;
+    auto gui = Application::Instance->getDocument(doc);
+    gui->openCommand("Make link");
+    for(auto obj : objs) {
+        std::string name = doc->getUniqueObjectName("Link");
+        Command::doCommand(Command::Doc,
+            "App.getDocument('%s').addObject('App::Link','%s').setLink(App.getDocument('%s').%s)",
+            doc->getName(),name.c_str(),obj->getDocument()->getName(),obj->getNameInDocument());
+    }
+    gui->commitCommand();
+}
+
+void TreeWidget::onMakeLinkSub() {
+    if (!this->contextItem || this->contextItem->type() != ObjectType)
+        return;
+    auto item = static_cast<DocumentObjectItem*>(this->contextItem);
+    App::DocumentObject* obj = item->object()->getObject();
+    if (!obj || !obj->getNameInDocument()) return;
+
+    DocumentObjectItem *parent = 0;
+    const auto &selItems = this->selectedItems();
+    if(selItems.size()==2) {
+        auto parentItem = selItems.front()==item?selItems.back():selItems.front();
+        if(parentItem->type() == ObjectType) {
+            auto pi = static_cast<DocumentObjectItem*>(parentItem);
+            if(item->isChildOfItem(pi))
+                parent = pi;
+        }
+    }
+
+    std::ostringstream str;
+    auto owner = item->getFullSubName(str,parent);
+    if(!owner || !owner->getNameInDocument()) {
+        FC_ERR("Invalid link sub owner");
+        return;
+    }
+    auto doc = App::GetApplication().getActiveDocument();
+    if(!doc) return;
+    auto gui = Application::Instance->getDocument(doc);
+    std::string name = doc->getUniqueObjectName("Link");
+    if(parent)
+        gui->openCommand("Make link relative");
+    else
+        gui->openCommand("Make link sub");
+    Command::doCommand(Command::Doc, 
+        "App.getDocument('%s').addObject('App::Link','%s').setLink(App.getDocument('%s').%s,'%s')", 
+        doc->getName(),name.c_str(),
+        owner->getDocument()->getName(),owner->getNameInDocument(),
+        str.str().c_str());
+    gui->commitCommand();
+    return;
+}
+
+void TreeWidget::onReplaceWithLink() {
+    std::map<Gui::Document *, std::vector<std::pair<App::DocumentObject*, std::string> > > cmds;
+    for(auto ti : this->selectedItems()) {
+        if(ti->type() != ObjectType) continue;
+        auto item = static_cast<DocumentObjectItem*>(ti);
+        auto vp = item->object();
+        auto obj = vp->getObject();
+        if(!obj || !obj->getNameInDocument())
+            continue;
+        auto parent = item->getParentItem();
+        if(!parent || 
+           !parent->object()->getObject()->getNameInDocument())
+        {
+            FC_WARN("skip '" << obj->getNameInDocument() << "' due to invalid parent");
+            continue;
+        }
+        if(parent->object()->getDocument()!=vp->getDocument()) {
+            FC_WARN("cannot replace link for external object '" << obj->getNameInDocument() << "'");
+            continue;
+        }
+        auto parentObj = parent->object()->getObject();
+        std::map<std::string, App::Property*> props;
+        std::ostringstream str;
+        str << "App.getDocument('"<<obj->getDocument()->getName()<<"')."<<
+            parent->object()->getObject()->getNameInDocument()<<'.';
+
+        parentObj->getPropertyMap(props);
+        bool found = false;
+        for(auto &v : props) {
+            if(v.second->isDerivedFrom(App::PropertyLink::getClassTypeId())) {
+                if(static_cast<App::PropertyLink*>(v.second)->getValue()==obj) {
+                    str << v.first << '=' << "App.getDocument('" <<
+                    obj->getDocument()->getName() << "').%s";
+                    found = true;
+                    break;
+                }
+            }else if(v.second->isDerivedFrom(App::PropertyLinkList::getClassTypeId())) {
+                const auto &links = static_cast<App::PropertyLinkList*>(v.second)->getValues();
+                int i=0;
+                for(auto link : links) {
+                    if(link != obj) {
+                        ++i;
+                        continue;
+                    }
+                    str << v.first << "={"<<i<<":App.getDocument('" <<
+                    obj->getDocument()->getName() << "').%s}";
+                    found = true;
+                    break;
+                }
+                if(found) break;
+            }
+        }
+        if(found)
+            cmds[vp->getDocument()].push_back(std::make_pair(obj,str.str()));
+        else 
+            FC_WARN("skip '" << obj->getNameInDocument() << "': no link property found");
+    }
+    for(auto &v : cmds) {
+        v.first->openCommand("Replace with link");
+        auto doc = v.first->getDocument();
+        for(auto &cmd : v.second) {
+            auto obj =  cmd.first;
+            std::string name = doc->getUniqueObjectName("Link");
+            Command::doCommand(Command::Doc,
+                "App.getDocument('%s').addObject('App::Link','%s').setLink(App.getDocument('%s').%s)",
+                doc->getName(),name.c_str(),doc->getName(),obj->getNameInDocument());
+            Command::doCommand(Command::Doc,
+                "App.getDocument('%s').%s.Placement = App.getDocument('%s').%s.Placement",
+                doc->getName(),name.c_str(),doc->getName(),obj->getNameInDocument());
+            Command::doCommand(Command::Doc,cmd.second.c_str(),name.c_str());
+        }
+        v.first->commitCommand();
+    }
+}
+
+void TreeWidget::onUnlink() {
+    if (!this->contextItem || this->contextItem->type() != ObjectType)
+        return;
+    auto item = static_cast<DocumentObjectItem*>(this->contextItem);
+    App::DocumentObject* obj = item->object()->getObject();
+    if (!obj || !obj->getNameInDocument()) {
+        FC_ERR("invalid selected object");
+        return;
+    }
+    auto linked = obj->getLinkedObject(false);
+    if(!linked || linked == obj) {
+        FC_ERR("invalid link");
+        return;
+    }
+    if(linked->getDocument()!=obj->getDocument()) {
+        FC_ERR("cannot unlink externally linked object");
+        return;
+    }
+
+    auto parent = item->getParentItem();
+    if(!parent) {
+        FC_ERR("no parent");
+        return;
+    }
+    auto parentObj = parent->object()->getObject();
+    if(!parentObj || !parentObj->getNameInDocument()) {
+        FC_ERR("invalid parent");
+        return;
+    }
+
+    std::map<std::string, App::Property*> props;
+    std::ostringstream str;
+    str << "App.getDocument('"<<obj->getDocument()->getName()<<"')."<<
+        parentObj->getNameInDocument()<<'.';
+
+    parentObj->getPropertyMap(props);
+    bool found = false;
+    for(auto &v : props) {
+        if(v.second->isDerivedFrom(App::PropertyLink::getClassTypeId())) {
+            if(static_cast<App::PropertyLink*>(v.second)->getValue()==obj) {
+                str << v.first << '=' << "App.getDocument('" <<
+                linked->getDocument()->getName() << "')." << linked->getNameInDocument();
+                found = true;
+                break;
+            }
+        }else if(v.second->isDerivedFrom(App::PropertyLinkList::getClassTypeId())) {
+            const auto &links = static_cast<App::PropertyLinkList*>(v.second)->getValues();
+            int i=0;
+            for(auto link : links) {
+                if(link != obj) {
+                    ++i;
+                    continue;
+                }
+                str << v.first << "={"<<i<<":App.getDocument('" <<
+                linked->getDocument()->getName() << "')."<<linked->getNameInDocument()<<'}';
+                found = true;
+                break;
+            }
+            if(found) break;
+        }
+    }
+    if(!found) 
+        FC_ERR("cannot find property link to '" << obj->getNameInDocument() << 
+                "' in '" << parentObj->getNameInDocument() << "'");
+    else{
+        auto gui = item->object()->getDocument();
+        gui->openCommand("Unlink");
+        Command::runCommand(Command::Doc, str.str().c_str());
+        gui->commitCommand();
+    }
+}
+
+void TreeWidget::onImportLink() {
+    std::map<Gui::Document*, std::vector<App::DocumentObject*> > objMap;
+    for(auto ti : this->selectedItems()) {
+        if(ti->type() != ObjectType) continue;
+        auto item = static_cast<DocumentObjectItem*>(ti);
+        auto vp = item->object();
+        auto obj = vp->getObject();
+        if(!obj || !obj->getNameInDocument() || 
+           item->getParentDocument()!=item->getOwnerDocument())
+            continue;
+
+        objMap[vp->getDocument()].push_back(obj);
+    }
+
+    for(auto &v : objMap) {
+        v.first->openCommand("Import links");
+        auto objs = v.first->getDocument()->importLinks(v.second);
+        for(auto o : objs) {
+            auto vp = Application::Instance->getViewProvider(o);
+            if(vp) vp->hide();
+        }
+        v.first->commitCommand();
+    }
+}
+
+void TreeWidget::onImportAllLink() {
+    std::set<Gui::Document*> docs;
+    for(auto ti : this->selectedItems()) {
+        if(ti->type() != ObjectType) continue;
+        auto item = static_cast<DocumentObjectItem*>(ti);
+        auto vp = item->object();
+        auto obj = vp->getObject();
+        if(!obj || !obj->getNameInDocument() ||
+           item->getParentDocument()!=item->getOwnerDocument())
+            continue;
+        docs.insert(vp->getDocument());
+    }
+    if(contextItem) {
+        if(contextItem->type() == DocumentType) {
+            auto doc = static_cast<DocumentItem*>(contextItem)->document();
+            docs.insert(const_cast<Document*>(doc));
+        }else if(contextItem->type() == ObjectType)
+            docs.insert(static_cast<DocumentObjectItem*>(
+                        contextItem)->object()->getDocument());
+    }
+    for(auto doc : docs) {
+        doc->openCommand("Import all links");
+        std::ostringstream str;
+        str << "for o in App.getDocument('"<<doc->getDocument()->getName()<<"').importLinks():" << std::endl
+            << "  o.ViewObject.Visibility=False";
+        Command::runCommand(Command::Doc,str.str().c_str());
+        doc->commitCommand();
+    }
+}
+
 void TreeWidget::onSelectLinked()
 {
     if (!this->contextItem || this->contextItem->type() != ObjectType) return;
     auto item = static_cast<DocumentObjectItem*>(this->contextItem);
-    auto docItem = getDocumentItem(item->object()->getDocument());
-    if(docItem)
-        docItem->selectLinkedItem(item,false);
+    item->getOwnerDocument()->selectLinkedItem(item,false);
 }
 
 void TreeWidget::onSelectLinkedFinal()
 {
     if (!this->contextItem || this->contextItem->type() != ObjectType) return;
     auto item = static_cast<DocumentObjectItem*>(this->contextItem);
-    auto docItem = getDocumentItem(item->object()->getDocument());
-    if(docItem)
-        docItem->selectLinkedItem(item,true);
+    item->getOwnerDocument()->selectLinkedItem(item,true);
 }
 
 void TreeWidget::onSelectAllLinks()
 {
     if (!this->contextItem || this->contextItem->type() != ObjectType) return;
     auto item = static_cast<DocumentObjectItem*>(this->contextItem);
-    auto docItem = getDocumentItem(item->object()->getDocument());
-    if(docItem) {
-        item->setSelected(false);
-        docItem->updateSelection();
-    }
+    item->setSelected(false);
+    item->getParentDocument()->updateSelection();
     for(auto link: App::GetApplication().getLinksTo(item->object()->getObject(),true)) {
         if(!link || !link->getNameInDocument()) 
             continue;
@@ -984,6 +1343,24 @@ void TreeWidget::setupText() {
     this->selectAllInstancesAction->setText(tr("Select all instances"));
     this->selectAllInstancesAction->setStatusTip(tr("Select all instances of this object with different parents"));
 
+    this->makeLinkAction->setText(tr("Create link"));
+    this->makeLinkAction->setStatusTip(tr("Create a new link to the selected object"));
+
+    this->makeLinkSubAction->setText(tr("Create link sub"));
+    this->makeLinkSubAction->setStatusTip(tr("Create a new link to the selected sub object"));
+
+    this->replaceWithLinkAction->setText(tr("Replace with link"));
+    this->replaceWithLinkAction->setStatusTip(tr("Replace the selected objects with a link"));
+
+    this->unlinkAction->setText(tr("Unlink"));
+    this->unlinkAction->setStatusTip(tr("Strip one level of link"));
+
+    this->importLinkAction->setText(tr("Import external link"));
+    this->importLinkAction->setStatusTip(tr("Import externally linked object"));
+
+    this->importAllLinkAction->setText(tr("Import all external links"));
+    this->importAllLinkAction->setStatusTip(tr("Import all externally linked objects"));
+
     this->selectLinkedAction->setText(tr("Select linked object"));
     this->selectLinkedAction->setStatusTip(tr("Select the object that is linked by this item"));
 
@@ -1017,8 +1394,7 @@ void TreeWidget::onShowHidden() {
     if(this->contextItem->type() == DocumentType)
         docItem = static_cast<DocumentItem*>(contextItem);
     else if(this->contextItem->type() == ObjectType)
-        docItem = getDocumentItem(
-            static_cast<DocumentObjectItem*>(contextItem)->object()->getDocument());
+        docItem = static_cast<DocumentObjectItem*>(contextItem)->getParentDocument();
     if(docItem)
         docItem->setShowHidden(showHiddenAction->isChecked());
 }
@@ -2270,13 +2646,29 @@ App::DocumentObject *DocumentObjectItem::getSubName(std::ostringstream &str) con
     return obj;
 }
 
-App::DocumentObject *DocumentObjectItem::getFullSubName(std::ostringstream &str) const {
-    if(!isParentGroup())
+App::DocumentObject *DocumentObjectItem::getFullSubName(
+        std::ostringstream &str, DocumentObjectItem *parent) const 
+{
+    auto pi = getParentItem();
+    if(!pi || pi==parent || (!parent && !pi->isGroup()))
         return object()->getObject();
 
-    auto ret = getParentItem()->getFullSubName(str);
+    auto ret = pi->getFullSubName(str,parent);
     str << getName() << '.';
     return ret;
+}
+
+DocumentItem *DocumentObjectItem::getParentDocument() const {
+    for(auto pi = parent(); pi ; pi = pi->parent()) {
+        if(pi->type()==TreeWidget::DocumentType)
+            return static_cast<DocumentItem*>(pi);
+    }
+    assert(false);
+    return 0;
+}
+
+DocumentItem *DocumentObjectItem::getOwnerDocument() const {
+    return const_cast<DocumentItem*>(&myData->docItem);
 }
 
 
