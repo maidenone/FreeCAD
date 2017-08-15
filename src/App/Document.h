@@ -66,7 +66,7 @@ public:
         SkipRecompute = 0,
         KeepTrailingDigits = 1,
         Closable = 2,
-        Restoring = 3
+        Restoring = 3,
     };
 
     /** @name Properties */
@@ -144,6 +144,7 @@ public:
                         Base::Writer   &)> signalExportViewObjects;
     boost::signal<void (const std::vector<App::DocumentObject*>&,
                         Base::XMLReader&)> signalImportObjects;
+    boost::signal<void (const std::vector<App::DocumentObject*>&)> signalFinishImportObjects;
     boost::signal<void (const std::vector<App::DocumentObject*>&, Base::Reader&,
                         const std::map<std::string, std::string>&)> signalImportViewObjects;
     boost::signal<void (const App::Document&)> signalRecomputed;
@@ -160,9 +161,29 @@ public:
     /// Restore the document from the file in Property Path
     void restore (bool delaySignal=false);
     void afterRestore(bool checkXLink=false);
-    void exportObjects(const std::vector<App::DocumentObject*>&, std::ostream&);
+    void afterRestore(const std::vector<App::DocumentObject *> &, bool checkXLink=false);
+    enum ExportStatus {
+        NotExporting,
+        Exporting,
+        ExportKeepExternal,
+    };
+    ExportStatus isExporting() const;
+    void exportObjects(const std::vector<App::DocumentObject*>&, std::ostream&, bool keepExternal=false);
     void exportGraphviz(std::ostream&) const;
     std::vector<App::DocumentObject*> importObjects(Base::XMLReader& reader);
+    /** Import any externally linked objects
+     *
+     * @param objs: input list of objects. Only objects belonging to this document will
+     * be checked for external links. And all found external linked object will be imported
+     * to this document. Link type properties of those input objects will be automatically 
+     * reassigned to the imported objects. Note that the link properties of other objects
+     * in the document but not included in the input list, will not be affected even if they
+     * point to some object beining imported. To import all objects, simply pass in all objects
+     * of this document.
+     *
+     * @return the list of imported objects
+     */
+    std::vector<App::DocumentObject*> importLinks(const std::vector<App::DocumentObject*> &objs);
     /// Opens the document from its file name
     //void open (void);
     /// Is the document already saved to a file
@@ -205,12 +226,17 @@ public:
     void addObject(DocumentObject*, const char* pObjectName=0);
     
 
-    /** Copy an object from another document to this document
-     * If \a recursive is true then all objects this object depends on
-     * are copied as well. By default \a recursive is false.
-     * Returns the copy of the object or 0 if the creation failed.
+    /** Copy objects from another document to this document
+     *
+     * @param recursive: if true, then all objects this object depends on are
+     * copied as well. By default \a recursive is false.
+     *
+     * @param keepExternal: if true, then do not copy externally linked objects.
+     *
+     * @return Returns the list of objects copied.
      */
-    DocumentObject* copyObject(DocumentObject* obj, bool recursive=false);
+    std::vector<DocumentObject*> copyObject(const std::vector<DocumentObject*> &objs, 
+            bool recursive=false, bool keepExternal=true);
     /** Move an object from another document to this document
      * If \a recursive is true then all objects this object depends on
      * are moved as well. By default \a recursive is false.
@@ -323,11 +349,21 @@ public:
     bool checkOnCycle(void);
     /// get a list of all objects linking to the given object
     std::vector<App::DocumentObject*> getInList(const DocumentObject* me) const;
-    /// Get a complete list of all objects the given objects depend on. The list
-    /// also contains the given objects!
-    /// deprecated! Use In- and OutList mimic in the DocumentObject instead!
-    std::vector<App::DocumentObject*> getDependencyList
-        (const std::vector<App::DocumentObject*>&) const;
+    /** Get a complete list of all objects the given objects depend on. 
+     *
+     * This function is defined as static because it accpets objects from
+     * different documents, and the returned list will contain dependent
+     * objects from all relavent documents
+     *
+     * @param objs: input objects to query for dependency. 
+     * @param noExternal: if true, exclude any external dependencies
+     * @param sort: if true, return a topologically sorted list
+     * @param hasExternal: if non zero, return true if there is any external
+     * dependency found regardless if 'noExternal' is true or not.
+     */
+    static std::vector<App::DocumentObject*> getDependencyList
+        (const std::vector<App::DocumentObject*> &objs,
+         bool noExternal=false, bool sort=false, bool *hasExternal=0);
     // set Changed
     //void setChanged(DocumentObject* change);
     /// get a list of topological sorted objects (https://en.wikipedia.org/wiki/Topological_sorting)
