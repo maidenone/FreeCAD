@@ -2870,7 +2870,8 @@ Document::importLinks(const std::vector<App::DocumentObject*> &objArray)
         obj->getPropertyList(props);
         for(auto prop : props) {
             auto xlink = dynamic_cast<App::PropertyXLink*>(prop);
-            if(!xlink) continue; 
+            if(!xlink || xlink->testStatus(Property::Immutable) || obj->isReadOnly(prop))
+                continue;
             auto linked = xlink->getValue();
             if(linked && linked->getNameInDocument() && 
                linked->getDocument()!=this && 
@@ -2913,7 +2914,7 @@ Document::importLinks(const std::vector<App::DocumentObject*> &objArray)
 #define CHECK_LINK(_type)  \
             {\
                 auto link = dynamic_cast<App::_type *>(prop);\
-                if(link) {\
+                if(link && !link->testStatus(Property::Immutable) && !obj->isReadOnly(prop)) {\
                     auto copy = link->CopyOnImportExternal(nameMap);\
                     if(copy) propMap[prop].reset(copy);\
                     continue;\
