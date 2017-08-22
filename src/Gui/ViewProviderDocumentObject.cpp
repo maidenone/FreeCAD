@@ -125,6 +125,8 @@ void ViewProviderDocumentObject::onChanged(const App::Property* prop)
             Visibility.getValue() ? show() : hide();
             Visibility.setStatus(App::Property::User2, false);
         }
+        if(getObject())
+            getObject()->Visibility.setValue(Visibility.getValue());
     }
 
     ViewProvider::onChanged(prop);
@@ -179,6 +181,9 @@ void ViewProviderDocumentObject::attach(App::DocumentObject *pcObj)
     // save Object pointer
     pcObject = pcObj;
 
+    if(pcObj && pcObj->getNameInDocument())
+        pcObj->Visibility.setValue(Visibility.getValue());
+
     // Retrieve the supported display modes of the view provider
     aDisplayModesArray = this->getDisplayModes();
 
@@ -206,6 +211,10 @@ void ViewProviderDocumentObject::attach(App::DocumentObject *pcObj)
 
 void ViewProviderDocumentObject::updateData(const App::Property* prop)
 {
+    if(prop == &getObject()->Visibility) {
+        if(!isRestoring() && Visibility.getValue()!=getObject()->Visibility.getValue())
+            Visibility.setValue(!Visibility.getValue());
+    }
     ViewProvider::updateData(prop);
 }
 
