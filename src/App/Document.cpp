@@ -2345,7 +2345,9 @@ std::vector<App::DocumentObject*> Document::topologicalSort(const std::vector<Ap
 
     const auto &objectArray = objs.empty()?d->objectArray:objs;
     for (auto obj : objectArray) {
-        if(!obj->getNameInDocument() || obj->getDocument()!=this)
+        // We now support externally linked objects
+        // if(!obj->getNameInDocument() || obj->getDocument()!=this)
+        if(!obj->getNameInDocument())
             continue;
         //we need inlist with unique entries
         auto in = obj->getInList();
