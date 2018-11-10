@@ -24,6 +24,7 @@
 #include "PreCompiled.h"
 
 #ifndef _PreComp_
+# include <QApplication>
 # include <QPixmap>
 # include <QTimer>
 # include <Inventor/SoPickedPoint.h>
@@ -57,6 +58,7 @@
 #include "SoFCDB.h"
 #include "ViewProviderExtension.h"
 #include "SoFCUnifiedSelection.h"
+#include "ViewProviderLink.h"
 
 #include <boost/bind.hpp>
 
@@ -698,17 +700,16 @@ bool ViewProvider::canDropObjectEx(App::DocumentObject* obj, App::DocumentObject
     return canDropObject(obj);
 }
 
-void ViewProvider::dropObjectEx(App::DocumentObject* obj, App::DocumentObject *owner, 
+std::string ViewProvider::dropObjectEx(App::DocumentObject* obj, App::DocumentObject *owner, 
         const char *subname, const std::vector<std::string> &elements) 
 {
     auto vector = getExtensionsDerivedFromType<Gui::ViewProviderExtension>();
     for(Gui::ViewProviderExtension* ext : vector) {
-        if(ext->extensionCanDropObjectEx(obj, owner, subname, elements)) {
-            ext->extensionDropObjectEx(obj, owner, subname, elements);
-            return;
-        }
+        if(ext->extensionCanDropObjectEx(obj, owner, subname, elements))
+            return ext->extensionDropObjectEx(obj, owner, subname, elements);
     }
     dropObject(obj);
+    return std::string();
 }
 
 void ViewProvider::Restore(Base::XMLReader& reader) {
@@ -892,8 +893,18 @@ Base::BoundBox3d ViewProvider::getBoundingBox(const char *subname, bool transfor
     if(!view)
         view  = Application::Instance->activeView();
     auto iview = dynamic_cast<View3DInventor*>(view);
-    if(!iview)
-        throw Base::RuntimeError("no view");
+    if(!iview) {
+        auto doc = Application::Instance->activeDocument();
+        if(doc) {
+            auto views = doc->getMDIViewsOfType(View3DInventor::getClassTypeId());
+            if(views.size())
+                iview = dynamic_cast<View3DInventor*>(views.front());
+        }
+        if(!iview) {
+            FC_ERR("no view");
+            return Base::BoundBox3d();
+        }
+    }
 
     View3DInventorViewer* viewer = iview->getViewer();
     SoGetBoundingBoxAction bboxAction(viewer->getSoRenderManager()->getViewportRegion());
@@ -934,4 +945,17 @@ Base::BoundBox3d ViewProvider::getBoundingBox(const char *subname, bool transfor
     bbox.getMax().getValue(maxX,maxY,maxZ);
     bbox.getMin().getValue(minX,minY,minZ);
     return Base::BoundBox3d(minX,minY,minZ,maxX,maxY,maxZ);
+}
+
+bool ViewProvider::isLinkVisible() const {
+    auto ext = getExtensionByType<ViewProviderLinkObserver>(true);
+    if(!ext)
+        return true;
+    return ext->isLinkVisible();
+}
+
+void ViewProvider::setLinkVisible(bool visible) {
+    auto ext = getExtensionByType<ViewProviderLinkObserver>(true);
+    if(ext)
+        ext->setLinkVisible(visible);
 }

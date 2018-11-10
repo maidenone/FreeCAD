@@ -39,13 +39,16 @@
 # include <TopoDS_Iterator.hxx>
 # include <TopExp.hxx>
 # include <Standard_Failure.hxx>
+# include <Standard_Version.hxx>
 # include <gp_GTrsf.hxx>
 # include <gp_Trsf.hxx>
 # include <BRepBuilderAPI_MakeShape.hxx>
 # include <TopTools_ListIteratorOfListOfShape.hxx>
 #endif
 
+#if OCC_VERSION_HEX >= 0x060800
 #include <OSD_OpenFile.hxx>
+#endif
 
 #include <Base/Console.h>
 #include <Base/Writer.h>
@@ -99,6 +102,7 @@ void PropertyPartShape::setValue(const TopoShape& sh)
             _Shape.Tag = obj->getID();
     }
     hasSetValue();
+    _Ver.clear();
 }
 
 void PropertyPartShape::setValue(const TopoDS_Shape& sh, bool resetElementMap)
@@ -109,6 +113,7 @@ void PropertyPartShape::setValue(const TopoDS_Shape& sh, bool resetElementMap)
         _Shape.Tag = obj->getID();
     _Shape.setShape(sh,resetElementMap);
     hasSetValue();
+    _Ver.clear();
 }
 
 const TopoDS_Shape& PropertyPartShape::getValue(void)const 
@@ -148,7 +153,7 @@ Base::BoundBox3d PropertyPartShape::getBoundingBox() const
         box.MinZ = zMin;
         box.MaxZ = zMax;
     }
-    catch (Standard_Failure) {
+    catch (Standard_Failure&) {
     }
 
     return box;
@@ -213,15 +218,15 @@ unsigned int PropertyPartShape::getMemSize (void) const
 
 void PropertyPartShape::getPaths(std::vector<App::ObjectIdentifier> &paths) const
 {
-    paths.push_back(App::ObjectIdentifier(getContainer()) << App::ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(App::ObjectIdentifier(*this)
                     << App::ObjectIdentifier::Component::SimpleComponent(App::ObjectIdentifier::String("ShapeType")));
-    paths.push_back(App::ObjectIdentifier(getContainer()) << App::ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(App::ObjectIdentifier(*this)
                     << App::ObjectIdentifier::Component::SimpleComponent(App::ObjectIdentifier::String("Orientation")));
-    paths.push_back(App::ObjectIdentifier(getContainer()) << App::ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(App::ObjectIdentifier(*this)
                     << App::ObjectIdentifier::Component::SimpleComponent(App::ObjectIdentifier::String("Length")));
     paths.push_back(App::ObjectIdentifier(getContainer()) << App::ObjectIdentifier::Component::SimpleComponent(getName())
                     << App::ObjectIdentifier::Component::SimpleComponent(App::ObjectIdentifier::String("Area")));
-    paths.push_back(App::ObjectIdentifier(getContainer()) << App::ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(App::ObjectIdentifier(*this)
                     << App::ObjectIdentifier::Component::SimpleComponent(App::ObjectIdentifier::String("Volume")));
 }
 
@@ -251,9 +256,9 @@ void PropertyPartShape::Save (Base::Writer &writer) const
         // If exporting, do not export mapped element name, but still make a mark
         if(owner) {
             if(!owner->isExporting())
-                version = owner->getElementMapVersion(this);
+                version = _Ver.size()?_Ver:owner->getElementMapVersion(this);
         }else
-            version = _Shape.getElementMapVersion();
+            version = _Ver.size()?_Ver:_Shape.getElementMapVersion();
         writer.Stream() << "\" ElementMap=\"" << version;
         writer.Stream() << "\"/>" << std::endl;
 
@@ -264,21 +269,27 @@ void PropertyPartShape::Save (Base::Writer &writer) const
     }
 }
 
+std::string PropertyPartShape::getElementMapVersion(bool restored) const {
+    if(restored)
+        return _Ver;
+    return PropertyComplexGeoData::getElementMapVersion(false);
+}
+
 void PropertyPartShape::Restore(Base::XMLReader &reader)
 {
     reader.readElement("Part");
     std::string file (reader.getAttribute("file") );
 
     if (!file.empty()) {
-        // initate a file read
+        // initiate a file read
         reader.addFile(file.c_str(),this);
     }
 
     auto owner = dynamic_cast<App::DocumentObject*>(getContainer());
-    std::string map_ver;
+    _Ver.clear();
     bool has_ver = reader.hasAttribute("ElementMap");
     if(has_ver)
-        map_ver = reader.getAttribute("ElementMap");
+        _Ver = reader.getAttribute("ElementMap");
 
     int hasher_idx = reader.hasAttribute("HasherIndex")?reader.getAttributeAsInteger("HasherIndex"):-1;
     if(owner && hasher_idx>=0) {
@@ -290,16 +301,16 @@ void PropertyPartShape::Restore(Base::XMLReader &reader)
     if(has_ver) {
         if(owner && owner->getDocument()->testStatus(App::Document::PartialDoc))
             _Shape.Restore(reader);
-        else if(map_ver.empty()) {
+        else if(_Ver.empty()) {
             // empty string marks the need for recompute after import
             if(owner) owner->getDocument()->addRecomputeObject(owner);
         }else{
             auto ver = owner?owner->getElementMapVersion(this):_Shape.getElementMapVersion();
-            if(ver!=map_ver) {
+            if(ver!=_Ver) {
                 // version mismatch, signal for regenerating.
                 if(owner && owner->getNameInDocument()) {
                     FC_WARN("geo element map version changed: " << owner->getNameInDocument()
-                            << ", " << map_ver << " -> " << ver);
+                            << ", " << _Ver << " -> " << ver);
                     owner->getDocument()->addRecomputeObject(owner);
                 }
             }else
@@ -333,7 +344,11 @@ static Standard_Boolean  BRepTools_Write(const TopoDS_Shape& Sh,
                                    const Standard_CString File)
 {
   ofstream os;
+#if OCC_VERSION_HEX >= 0x060800
   OSD_OpenStream(os, File, ios::out);
+#else
+  os.open(File, ios::out);
+#endif
   if (!os.rdbuf()->is_open()) return Standard_False;
 
   Standard_Boolean isGood = (os.good() && !os.eof());
@@ -380,7 +395,7 @@ void PropertyPartShape::SaveDocFile (Base::Writer &writer) const
             // we may run into some problems on the Linux platform
             static Base::FileInfo fi(App::Application::getTempFileName());
 
-            if (!BRepTools_Write(myShape,(const Standard_CString)fi.filePath().c_str())) {
+            if (!BRepTools_Write(myShape,(Standard_CString)fi.filePath().c_str())) {
                 // Note: Do NOT throw an exception here because if the tmp. file could
                 // not be created we should not abort.
                 // We only print an error message but continue writing the next files to the
@@ -462,7 +477,7 @@ void PropertyPartShape::RestoreDocFile(Base::Reader &reader)
             // Read the shape from the temp file, if the file is empty the stored shape was already empty.
             // If it's still empty after reading the (non-empty) file there must occurred an error.
             if (ulSize > 0) {
-                if (!BRepTools::Read(sh, (const Standard_CString)fi.filePath().c_str(), builder)) {
+                if (!BRepTools::Read(sh, (Standard_CString)fi.filePath().c_str(), builder)) {
                     // Note: Do NOT throw an exception here because if the tmp. created file could
                     // not be read it's NOT an indication for an invalid input stream 'reader'.
                     // We only print an error message but continue reading the next files from the
@@ -490,10 +505,12 @@ void PropertyPartShape::RestoreDocFile(Base::Reader &reader)
         }
     }
 
+    std::string ver = _Ver;
     // restore the element map
     shape.Hasher = hasher;
     shape.resetElementMap(elementMap);
     setValue(shape);
+    _Ver = ver;
 }
 
 // -------------------------------------------------------------------------
@@ -727,7 +744,7 @@ void PropertyFilletEdges::Restore(Base::XMLReader &reader)
     std::string file (reader.getAttribute("file") );
 
     if (!file.empty()) {
-        // initate a file read
+        // initiate a file read
         reader.addFile(file.c_str(),this);
     }
 }

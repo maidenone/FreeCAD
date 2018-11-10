@@ -330,6 +330,10 @@ ViewProviderMesh::~ViewProviderMesh()
     pLineColor->unref();
 }
 
+bool ViewProviderMesh::useNewSelectionModel(void) const {
+    return true;
+}
+
 void ViewProviderMesh::onChanged(const App::Property* prop)
 {
     // we're going to change the number of colors to one
@@ -685,7 +689,8 @@ void ViewProviderMesh::exportMesh(const char* filename, const char* fmt) const
         mat.diffuseColor.push_back(App::Color(c[0], c[1], c[2]));
     }
 
-    const Mesh::MeshObject& mesh = static_cast<Mesh::Feature*>(getObject())->Mesh.getValue();
+    Mesh::MeshObject mesh = static_cast<Mesh::Feature*>(getObject())->Mesh.getValue();
+    mesh.setPlacement(static_cast<Mesh::Feature*>(getObject())->globalPlacement());
     if (mat.diffuseColor.size() == mesh.countPoints())
         mat.binding = MeshCore::MeshIO::PER_VERTEX;
     else if (mat.diffuseColor.size() == mesh.countFacets())

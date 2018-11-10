@@ -232,11 +232,11 @@ bool ViewProviderSubShapeBinder::canDropObjectEx(App::DocumentObject *obj,
         return obj->getDocument()==doc;
 }
 
-void ViewProviderSubShapeBinder::dropObjectEx(App::DocumentObject *obj, App::DocumentObject *owner,
+std::string ViewProviderSubShapeBinder::dropObjectEx(App::DocumentObject *obj, App::DocumentObject *owner,
         const char *subname, const std::vector<std::string> &elements)
 {
     auto self = dynamic_cast<PartDesign::SubShapeBinder*>(getObject());
-    if(!self) return;
+    if(!self) return std::string();
     if(!subname) subname = "";
     std::vector<std::string> subs;
     if(elements.size()) {
@@ -249,6 +249,7 @@ void ViewProviderSubShapeBinder::dropObjectEx(App::DocumentObject *obj, App::Doc
     self->setLinks(owner?owner:obj,subs,QApplication::keyboardModifiers()==Qt::ControlModifier);
     if(self->Relative.getValue())
         updatePlacement(false);
+    return std::string();
 }
 
 
@@ -275,13 +276,16 @@ void ViewProviderSubShapeBinder::updatePlacement(bool transaction) {
         std::string linkSub;
         auto obj = sel[0].pObject->resolveRelativeLink(subname,link,linkSub);
         if(!obj) {
-            FC_ERR("cannot resolve relative link");
-            return;
-        }
-        auto sobj = obj->getSubObject(subname.c_str(),0,&mat);
-        if(sobj!=self) {
-            FC_ERR("invalid selection " << subname);
-            return;
+            if(!link) {
+                FC_ERR("cannot resolve relative link");
+                return;
+            }
+        }else{
+            auto sobj = obj->getSubObject(subname.c_str(),0,&mat);
+            if(sobj!=self) {
+                FC_ERR("invalid selection " << subname);
+                return;
+            }
         }
     }
     if(!transaction) {

@@ -58,6 +58,7 @@
 #include <Base/Exception.h>
 #include <Base/Interpreter.h>
 #include <Base/Sequencer.h>
+#include <Base/Tools.h>
 
 #include <App/Document.h>
 #include <App/DocumentObject.h>
@@ -223,6 +224,7 @@ Command::Command(const char* name)
     sGroup      = QT_TR_NOOP("Standard");
     eType       = AlterDoc | Alter3DView | AlterSelection;
     bEnabled    = true;
+    bCanLog     = true;
 }
 
 Command::~Command()
@@ -253,12 +255,16 @@ void Command::addTo(QWidget *pcWidget)
 
 void Command::addToGroup(ActionGroup* group, bool checkable)
 {
+    addToGroup(group);
+    _pcAction->setCheckable(checkable);
+}
+
+void Command::addToGroup(ActionGroup* group)
+{
     if (!_pcAction) {
         _pcAction = createAction();
         testActive();
     }
-
-    _pcAction->setCheckable(checkable);
     group->addAction(_pcAction->findChild<QAction*>());
 }
 
@@ -295,6 +301,21 @@ App::DocumentObject* Command::getObject(const char* Name) const
         return 0;
 }
 
+int Command::_busy;
+
+class PendingLine {
+public:
+    PendingLine(MacroManager::LineType type, const char *line) {
+        Application::Instance->macroManager()->addLine(type,line,true);
+    }
+    ~PendingLine() {
+        cancel();
+    }
+    void cancel() {
+        Application::Instance->macroManager()->addLine(MacroManager::Cmt,0,true);
+    }
+};
+
 void Command::invoke(int i)
 {
     // Do not query _pcAction since it isn't created necessarily
@@ -304,9 +325,43 @@ void Command::invoke(int i)
     // set the application module type for the macro
     getGuiApplication()->macroManager()->setModule(sAppModule);
     try {
+        std::unique_ptr<LogDisabler> disabler;
+        if(bCanLog && !_busy)
+            disabler.reset(new LogDisabler);
         // check if it really works NOW (could be a delay between click deactivation of the button)
         if (isActive()) {
-            activated( i );
+            auto manager = getGuiApplication()->macroManager();
+            if(!disabler)
+                activated( i );
+            else {
+                Gui::SelectionLogDisabler disabler;
+                auto lines = manager->getLines();
+                std::ostringstream ss;
+                ss << "### Begin command " << sName;
+                // Add a pending line to mark the start of a command
+                PendingLine pending(MacroManager::Cmt, ss.str().c_str());
+                activated( i );
+                ss.str("");
+                if(manager->getLines() == lines) {
+                    // This command does not record any lines, lets do it for
+                    // him. The above LogDisabler is to prevent nested command
+                    // logging, i.e. we only auto log the first invoking
+                    // command.
+
+                    // Cancel the above pending line first
+                    pending.cancel();
+                    ss << "Gui.runCommand('" << sName << "'," << i << ')';
+                    if(eType & AlterDoc)
+                        manager->addLine(MacroManager::App, ss.str().c_str());
+                    else
+                        manager->addLine(MacroManager::Gui, ss.str().c_str());
+                }else{
+                    // In case the command has any output to the console, lets
+                    // mark the end of the command here
+                    ss << "### End command " << sName;
+                    manager->addLine(MacroManager::Cmt, ss.str().c_str());
+                }
+            }
             getMainWindow()->updateActions();
         }
     }
@@ -536,6 +591,9 @@ void Command::printCaller(const char *file, int line) {
 /// Run a App level Action
 void Command::_runCommand(const char *file, int line, DoCmd_Type eType, const char* sCmd)
 {
+    LogDisabler d1;
+    SelectionLogDisabler d2;
+
     printCaller(file,line);
     if (eType == Gui)
         Gui::Application::Instance->macroManager()->addLine(MacroManager::Gui,sCmd);
@@ -553,6 +611,8 @@ void Command::_runCommand(const char *file, int line, DoCmd_Type eType, const QB
 void Command::addModule(DoCmd_Type eType,const char* sModuleName)
 {
     if(alreadyLoadedModule.find(sModuleName) == alreadyLoadedModule.end()) {
+        LogDisabler d1;
+        SelectionLogDisabler d2;
         std::string sCmd("import ");
         sCmd += sModuleName;
         if (eType == Gui)

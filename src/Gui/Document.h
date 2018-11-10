@@ -114,9 +114,11 @@ public:
     /// signal on leaving edit mode
     mutable boost::signal<void (const Gui::ViewProviderDocumentObject&)> signalResetEdit;
     /// signal on changed Object, the 2nd argument is the highlite mode to use
-    mutable boost::signal<void (const Gui::ViewProviderDocumentObject&,
-                                const Gui::HighlightMode&,
-                                bool)>                                   signalHighlightObject;
+    mutable boost::signal<void (const Gui::ViewProviderDocumentObject&, 
+                                const Gui::HighlightMode&, 
+                                bool,
+                                App::DocumentObject *parent, 
+                                const char *subname)> signalHighlightObject; 
     /// signal on changed Object, the 2nd argument is the highlite mode to use
     mutable boost::signal<void (const Gui::ViewProviderDocumentObject&,
                                 const Gui::TreeItemMode&)>               signalExpandObject;
@@ -141,6 +143,8 @@ public:
     bool saveAs(void);
     /// Save a copy of the document under a new file name
     bool saveCopy(void);
+    /// Save all open document
+    static void saveAll();
     /// This method is used to save properties or very small amounts of data to an XML document.
     virtual void Save (Base::Writer &writer) const;
     /// This method is used to restore properties from an XML document.
@@ -205,6 +209,8 @@ public:
     /// returns a list of all MDI views of a certain type
     std::list<MDIView*> getMDIViewsOfType(const Base::Type& typeId) const;
     //@}
+
+    MDIView *setActiveView(ViewProviderDocumentObject *vp=0, Base::Type typeId = Base::Type()) const;
 
     /** @name View provider handling  */
     //@{

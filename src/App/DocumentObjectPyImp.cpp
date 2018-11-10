@@ -22,6 +22,7 @@
 
 #include "PreCompiled.h"
 
+#include <Base/GeometryPyCXX.h>
 #include <Base/MatrixPy.h>
 #include "DocumentObject.h"
 #include "Document.h"
@@ -183,6 +184,9 @@ Py::List DocumentObjectPy::getState(void) const
     }
     if (object->testStatus(App::PartialObject)){
         list.append(Py::String("Partial"));
+    }
+    if (object->testStatus(App::ObjImporting)){
+        list.append(Py::String("Importing"));
     }
     if (uptodate) {
         list.append(Py::String("Up-to-date"));
@@ -368,8 +372,8 @@ PyObject*  DocumentObjectPy::getSubObject(PyObject *args, PyObject *keywds)
                 &obj,&retType,&pyMat,&doTransform,&depth))
         return 0;
 
-    if(retType<0 || retType>2) {
-        PyErr_SetString(PyExc_TypeError, "invalid retType, can only be integer 0, 1 or 2");
+    if(retType<0 || retType>6) {
+        PyErr_SetString(PyExc_TypeError, "invalid retType, can only be integer 0~6");
         return 0;
     }
 
@@ -415,6 +419,7 @@ PyObject*  DocumentObjectPy::getSubObject(PyObject *args, PyObject *keywds)
     bool transform = PyObject_IsTrue(doTransform);
 
     struct SubInfo {
+        App::DocumentObject *sobj;
         Py::Object obj;
         Py::Object pyObj;
         Base::Matrix4D mat;
@@ -430,49 +435,74 @@ PyObject*  DocumentObjectPy::getSubObject(PyObject *args, PyObject *keywds)
         mat = *static_cast<Base::MatrixPy*>(pyMat)->getMatrixPtr();
     }
 
-    std::vector<SubInfo> ret;
-    for(const auto &sub : subs) {
-        ret.emplace_back(mat);
-        auto &info = ret.back();
-        PyObject *pyObj = 0;
-        auto obj = getDocumentObjectPtr()->getSubObject(
-                sub.c_str(),retType==1?0:&pyObj,&info.mat,transform,depth);
-        if(pyObj)
-            info.pyObj = Py::Object(pyObj,true);
-        if(obj) 
-            info.obj = Py::Object(obj->getPyObject(),true);
-    }
-    if(ret.empty())
-        Py_Return;
-
-    if(single) {
-        if(retType==0)
-            return Py::new_reference_to(ret[0].pyObj);
-        else if(retType==1 && pyMat==Py_None)
-            return Py::new_reference_to(ret[0].obj);
-        Py::Tuple rret(retType==1?2:3);
-        rret.setItem(0,ret[0].obj);
-        rret.setItem(1,Py::Object(new Base::MatrixPy(ret[0].mat)));
-        if(retType!=1)
-            rret.setItem(2,ret[0].pyObj);
-        return Py::new_reference_to(rret);
-    }
-    Py::Tuple tuple(ret.size());
-    for(size_t i=0;i<ret.size();++i) {
-        if(retType==0)
-            tuple.setItem(i,ret[i].pyObj);
-        else if(retType==1 && pyMat==Py_None)
-            tuple.setItem(i,ret[i].obj);
-        else {
-            Py::Tuple rret(retType==1?2:3);
-            rret.setItem(0,ret[i].obj);
-            rret.setItem(1,Py::Object(new Base::MatrixPy(ret[i].mat)));
-            if(retType!=1)
-                rret.setItem(2,ret[i].pyObj);
-            tuple.setItem(i,rret);
+    PY_TRY {
+        std::vector<SubInfo> ret;
+        for(const auto &sub : subs) {
+            ret.emplace_back(mat);
+            auto &info = ret.back();
+            PyObject *pyObj = 0;
+            info.sobj = getDocumentObjectPtr()->getSubObject(
+                    sub.c_str(),retType!=0&&retType!=2?0:&pyObj,&info.mat,transform,depth);
+            if(pyObj)
+                info.pyObj = Py::Object(pyObj,true);
+            if(info.sobj) 
+                info.obj = Py::Object(info.sobj->getPyObject(),true);
         }
-    }
-    return Py::new_reference_to(tuple);
+        if(ret.empty())
+            Py_Return;
+
+        if(single) {
+            if(retType==0)
+                return Py::new_reference_to(ret[0].pyObj);
+            else if(retType==1 && pyMat==Py_None)
+                return Py::new_reference_to(ret[0].obj);
+            else if(retType==3)
+                return Py::new_reference_to(Py::Placement(Base::Placement(ret[0].mat)));
+            else if(retType==4)
+                return Py::new_reference_to(Py::Matrix(ret[0].mat));
+            else if(retType==5 || retType==6) {
+                if(ret[0].sobj)
+                    ret[0].sobj->getLinkedObject(true,&ret[0].mat,false);
+                if(retType==5)
+                    return Py::new_reference_to(Py::Placement(Base::Placement(ret[0].mat)));
+                else
+                    return Py::new_reference_to(Py::Matrix(ret[0].mat));
+            }
+            Py::Tuple rret(retType==1?2:3);
+            rret.setItem(0,ret[0].obj);
+            rret.setItem(1,Py::Object(new Base::MatrixPy(ret[0].mat)));
+            if(retType!=1)
+                rret.setItem(2,ret[0].pyObj);
+            return Py::new_reference_to(rret);
+        }
+        Py::Tuple tuple(ret.size());
+        for(size_t i=0;i<ret.size();++i) {
+            if(retType==0)
+                tuple.setItem(i,ret[i].pyObj);
+            else if(retType==1 && pyMat==Py_None)
+                tuple.setItem(i,ret[i].obj);
+            else if(retType==3)
+                tuple.setItem(i,Py::Placement(Base::Placement(ret[0].mat)));
+            else if(retType==4)
+                tuple.setItem(i,Py::Matrix(ret[0].mat));
+            else if(retType==5 || retType==6) {
+                if(ret[i].sobj)
+                    ret[i].sobj->getLinkedObject(true,&ret[i].mat,false);
+                if(retType==5)
+                    tuple.setItem(i,Py::Placement(Base::Placement(ret[i].mat)));
+                else
+                    tuple.setItem(i,Py::Matrix(ret[i].mat));
+            } else {
+                Py::Tuple rret(retType==1?2:3);
+                rret.setItem(0,ret[i].obj);
+                rret.setItem(1,Py::Object(new Base::MatrixPy(ret[i].mat)));
+                if(retType!=1)
+                    rret.setItem(2,ret[i].pyObj);
+                tuple.setItem(i,rret);
+            }
+        }
+        return Py::new_reference_to(tuple);
+    }PY_CATCH
 }
 
 PyObject*  DocumentObjectPy::getSubObjects(PyObject *args) {
@@ -480,11 +510,13 @@ PyObject*  DocumentObjectPy::getSubObjects(PyObject *args) {
     if (!PyArg_ParseTuple(args, "|i", &reason))
         return NULL;
 
-    auto names = getDocumentObjectPtr()->getSubObjects(reason);
-    Py::Tuple pyObjs(names.size());
-    for(size_t i=0;i<names.size();++i)
-        pyObjs.setItem(i,Py::String(names[i]));
-    return Py::new_reference_to(pyObjs);
+    PY_TRY {
+        auto names = getDocumentObjectPtr()->getSubObjects(reason);
+        Py::Tuple pyObjs(names.size());
+        for(size_t i=0;i<names.size();++i)
+            pyObjs.setItem(i,Py::String(names[i]));
+        return Py::new_reference_to(pyObjs);
+    }PY_CATCH;
 }
 
 PyObject*  DocumentObjectPy::getLinkedObject(PyObject *args, PyObject *keywds)
@@ -508,18 +540,21 @@ PyObject*  DocumentObjectPy::getLinkedObject(PyObject *args, PyObject *keywds)
         _mat = *static_cast<Base::MatrixPy*>(pyMat)->getMatrixPtr();
         mat = &_mat;
     }
-    auto linked = getDocumentObjectPtr()->getLinkedObject(
-            PyObject_IsTrue(recursive), mat, PyObject_IsTrue(transform),depth);
-    if(!linked)
-        linked = getDocumentObjectPtr();
-    auto pyObj = Py::Object(linked->getPyObject(),true);
-    if(mat) {
-        Py::Tuple ret(2);
-        ret.setItem(0,pyObj);
-        ret.setItem(1,Py::Object(new Base::MatrixPy(*mat)));
-        return Py::new_reference_to(ret);
-    }
-    return Py::new_reference_to(pyObj);
+
+    PY_TRY {
+        auto linked = getDocumentObjectPtr()->getLinkedObject(
+                PyObject_IsTrue(recursive), mat, PyObject_IsTrue(transform),depth);
+        if(!linked)
+            linked = getDocumentObjectPtr();
+        auto pyObj = Py::Object(linked->getPyObject(),true);
+        if(mat) {
+            Py::Tuple ret(2);
+            ret.setItem(0,pyObj);
+            ret.setItem(1,Py::Object(new Base::MatrixPy(*mat)));
+            return Py::new_reference_to(ret);
+        }
+        return Py::new_reference_to(pyObj);
+    } PY_CATCH;
 }
 
 PyObject*  DocumentObjectPy::isElementVisible(PyObject *args)
@@ -754,4 +789,11 @@ PyObject *DocumentObjectPy::resolveSubElement(PyObject *args)
     } PY_CATCH;
 
     Py_Return;
+}
+
+Py::List DocumentObjectPy::getParents() const {
+    Py::List ret;
+    for(auto &v : getDocumentObjectPtr()->getParents())
+        ret.append(Py::TupleN(Py::Object(v.first->getPyObject(),true),Py::String(v.second)));
+    return ret;
 }

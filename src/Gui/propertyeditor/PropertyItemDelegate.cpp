@@ -29,21 +29,25 @@
 # include <QPainter>
 #endif
 
+#include <Base/Console.h>
+#include <Base/Tools.h>
 #include <App/Application.h>
 #include <App/Document.h>
 #include <App/DocumentObject.h>
 #include "PropertyItemDelegate.h"
 #include "PropertyItem.h"
 
+FC_LOG_LEVEL_INIT("PropertyItem",true,true);
+
 using namespace Gui::PropertyEditor;
 
 
 PropertyItemDelegate::PropertyItemDelegate(QObject* parent)
-    : QItemDelegate(parent), pressed(false), activeTransactionID(0)
+    : QItemDelegate(parent), pressed(false), activeTransactionID(0),changed(false)
 {
 
     connect(this, SIGNAL(closeEditor(QWidget*,QAbstractItemDelegate::EndEditHint)), 
-            this, SLOT(editorClosed()));
+            this, SLOT(editorClosed(QWidget*)));
 }
 
 PropertyItemDelegate::~PropertyItemDelegate()
@@ -118,14 +122,17 @@ bool PropertyItemDelegate::editorEvent (QEvent * event, QAbstractItemModel* mode
     return QItemDelegate::editorEvent(event, model, option, index);
 }
 
-void PropertyItemDelegate::editorClosed() {
+void PropertyItemDelegate::editorClosed(QWidget *editor) {
     int id = 0;
     auto &app = App::GetApplication();
-    app.getActiveTransaction(&id);
+    const char *name = app.getActiveTransaction(&id);
     if(id && id==activeTransactionID) {
+        FC_LOG("editor close transaction " << name);
         app.closeActiveTransaction(false,id);
         activeTransactionID = 0;
-    }
+    }else
+        FC_LOG("editor close");
+    editor->close();
 }
 
 QWidget * PropertyItemDelegate::createEditor (QWidget * parent, const QStyleOptionViewItem & /*option*/, 
@@ -142,20 +149,36 @@ QWidget * PropertyItemDelegate::createEditor (QWidget * parent, const QStyleOpti
         editor->setAutoFillBackground(true);
     if (editor && childItem->isReadOnly())
         editor->setDisabled(true);
-    else if (editor && this->pressed)
+    // else if (editor && this->pressed)
+    else if(editor) {
+        // We changed the way editor is activated in PropertyEditor (in response
+        // of signal activated and clicked), so now we should grab focus
+        // regardless of "preseed" or not (e.g. when activated by keyboard
+        // enter)
         editor->setFocus();
+    }
     this->pressed = false;
 
     auto &app = App::GetApplication();
-    if(app.autoTransaction() && !app.getActiveTransaction()) {
+    if(!app.autoTransaction()) 
+        FC_LOG("create editor");
+    else if(app.getActiveTransaction())
+        FC_LOG("create editor, already transacting " << app.getActiveTransaction());
+    else {
         auto items = childItem->getPropertyData();
         for(auto propItem=childItem->parent();items.empty() && propItem;propItem=propItem->parent())
             items = propItem->getPropertyData();
-        if(items.size()) {
+        if(items.empty()) 
+            FC_LOG("create editor, no item");
+        else {
             auto prop = items[0];
             auto parent = prop->getContainer();
             auto obj  = dynamic_cast<App::DocumentObject*>(parent);
-            if(obj && obj->getDocument() && !obj->getDocument()->hasPendingTransaction()) {
+            if(!obj || !obj->getDocument())
+                FC_LOG("invalid object");
+            else if(obj->getDocument()->hasPendingTransaction())
+                FC_LOG("pending transaction");
+            else {
                 std::ostringstream str;
                 str << "Change ";
                 for(auto prop : items) {
@@ -173,6 +196,7 @@ QWidget * PropertyItemDelegate::createEditor (QWidget * parent, const QStyleOpti
                 if(items.size()>1)
                     str << "...";
                 activeTransactionID = app.setActiveTransaction(str.str().c_str());
+                FC_LOG("create editor transaction " << app.getActiveTransaction());
             }
         }
     }
@@ -182,8 +206,10 @@ QWidget * PropertyItemDelegate::createEditor (QWidget * parent, const QStyleOpti
 void PropertyItemDelegate::valueChanged()
 {
     QWidget* editor = qobject_cast<QWidget*>(sender());
-    if (editor)
+    if (editor) {
+        Base::FlagToggler<> flag(changed);
         commitData(editor);
+    }
 }
 
 void PropertyItemDelegate::setEditorData(QWidget *editor, const QModelIndex &index) const
@@ -200,7 +226,7 @@ void PropertyItemDelegate::setEditorData(QWidget *editor, const QModelIndex &ind
 
 void PropertyItemDelegate::setModelData(QWidget* editor, QAbstractItemModel* model, const QModelIndex& index) const
 {
-    if (!index.isValid())
+    if (!index.isValid() || !changed)
         return;
     PropertyItem *childItem = static_cast<PropertyItem*>(index.internalPointer());
     QVariant data = childItem->editorData(editor);

@@ -39,6 +39,7 @@
 #endif
 
 /// Here the FreeCAD includes sorted by Base,App,Gui......
+#include <Base/Tools.h>
 #include <Base/Console.h>
 #include <Base/Tools.h>
 #include <Base/BoundBox.h>
@@ -66,7 +67,6 @@ PROPERTY_SOURCE(Gui::ViewProviderDocumentObject, Gui::ViewProvider)
 ViewProviderDocumentObject::ViewProviderDocumentObject()
   : pcObject(0)
 {
-    _UpdatingView = false;
     ADD_PROPERTY(DisplayMode,((long)0));
     ADD_PROPERTY(Visibility,(true));
     ADD_PROPERTY(ShowInTree,(true));
@@ -184,10 +184,10 @@ void ViewProviderDocumentObject::show(void)
 
 void ViewProviderDocumentObject::updateView()
 {
-    if(_UpdatingView)
+    if(!pcObject || testStatus(ViewStatus::UpdatingView))
         return;
 
-    Base::FlagToggler<> flag(_UpdatingView);
+    Base::ObjectStatusLocker<ViewStatus,ViewProviderDocumentObject> lock(ViewStatus::UpdatingView,this);
 
     std::map<std::string, App::Property*> Map;
     pcObject->getPropertyMap(Map);
@@ -248,12 +248,16 @@ void ViewProviderDocumentObject::update(const App::Property* prop)
 
 Gui::Document* ViewProviderDocumentObject::getDocument() const
 {
+    if(!pcObject)
+        throw Base::RuntimeError("View provider detached");
     App::Document* pAppDoc = pcObject->getDocument();
     return Gui::Application::Instance->getDocument(pAppDoc);
 }
 
 Gui::MDIView* ViewProviderDocumentObject::getActiveView() const
 {
+    if(!pcObject)
+        throw Base::RuntimeError("View provider detached");
     App::Document* pAppDoc = pcObject->getDocument();
     Gui::Document* pGuiDoc = Gui::Application::Instance->getDocument(pAppDoc);
     return pGuiDoc->getActiveView();
@@ -261,6 +265,8 @@ Gui::MDIView* ViewProviderDocumentObject::getActiveView() const
 
 Gui::MDIView* ViewProviderDocumentObject::getEditingView() const
 {
+    if(!pcObject)
+        throw Base::RuntimeError("View provider detached");
     App::Document* pAppDoc = pcObject->getDocument();
     Gui::Document* pGuiDoc = Gui::Application::Instance->getDocument(pAppDoc);
     return pGuiDoc->getEditingViewOfViewProvider(const_cast<ViewProviderDocumentObject*>(this));
@@ -268,6 +274,8 @@ Gui::MDIView* ViewProviderDocumentObject::getEditingView() const
 
 Gui::MDIView* ViewProviderDocumentObject::getInventorView() const
 {
+    if(!pcObject)
+        throw Base::RuntimeError("View provider detached");
     App::Document* pAppDoc = pcObject->getDocument();
     Gui::Document* pGuiDoc = Gui::Application::Instance->getDocument(pAppDoc);
 
@@ -281,6 +289,8 @@ Gui::MDIView* ViewProviderDocumentObject::getInventorView() const
 
 Gui::MDIView* ViewProviderDocumentObject::getViewOfNode(SoNode* node) const
 {
+    if(!pcObject)
+        throw Base::RuntimeError("View provider detached");
     App::Document* pAppDoc = pcObject->getDocument();
     Gui::Document* pGuiDoc = Gui::Application::Instance->getDocument(pAppDoc);
     return pGuiDoc->getViewOfNode(node);
@@ -288,6 +298,8 @@ Gui::MDIView* ViewProviderDocumentObject::getViewOfNode(SoNode* node) const
 
 SoNode* ViewProviderDocumentObject::findFrontRootOfType(const SoType& type) const
 {
+    if(!pcObject)
+        return 0;
     // first get the document this object is part of and get its GUI counterpart
     App::Document* pAppDoc = pcObject->getDocument();
     Gui::Document* pGuiDoc = Gui::Application::Instance->getDocument(pAppDoc);
@@ -321,7 +333,7 @@ SoNode* ViewProviderDocumentObject::findFrontRootOfType(const SoType& type) cons
 
 void ViewProviderDocumentObject::setActiveMode()
 {
-    if (DisplayMode.getEnums()) {
+    if (DisplayMode.isValid()) {
         const char* mode = DisplayMode.getValueAsString();
         if (mode)
             setDisplayMode(mode);

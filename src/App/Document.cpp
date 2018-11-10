@@ -114,7 +114,7 @@ recompute path. Also enables more complicated dependencies beyond trees.
 #include "OriginGroupExtension.h"
 #include "GeoFeature.h"
 
-FC_LOG_LEVEL_INIT("App::Document", true, true);
+FC_LOG_LEVEL_INIT("App", true, true, true);
 
 using Base::Console;
 using Base::streq;
@@ -1043,7 +1043,9 @@ void Document::_checkTransaction(DocumentObject* pcDelObj, const Property *What,
                     bool ignore = false;
                     if(What) {
                         auto parent = What->getContainer();
-                        if(What->testStatus(Property::Output) || (parent->getPropertyType(What) & Prop_Output))
+                        auto parentObj = dynamic_cast<DocumentObject*>(parent);
+                        if((!parentObj || What != &parentObj->Label) && 
+                           (What->testStatus(Property::Output) || (parent->getPropertyType(What) & Prop_Output)))
                             ignore = true;
                     }
                     if(FC_LOG_INSTANCE.isEnabled(FC_LOGLEVEL_LOG)) {
@@ -1636,8 +1638,8 @@ static DocExportStatus _ExportStatus;
 // Exception-safe exporting status setter
 class DocumentExporting {
 public:
-    DocumentExporting(bool keepExternal, const std::vector<App::DocumentObject*> &objs) {
-        _ExportStatus.status = keepExternal?Document::ExportKeepExternal:Document::Exporting;
+    DocumentExporting(const std::vector<App::DocumentObject*> &objs) {
+        _ExportStatus.status = Document::Exporting;
         _ExportStatus.objs.insert(objs.begin(),objs.end());
     }
 
@@ -1659,10 +1661,9 @@ Document::ExportStatus Document::isExporting(const App::DocumentObject *obj) con
     return Document::NotExporting;
 }
 
-void Document::exportObjects(const std::vector<App::DocumentObject*>& obj,
-                             std::ostream& out, bool keepExternal)
-{
-    DocumentExporting exporting(keepExternal,obj);
+void Document::exportObjects(const std::vector<App::DocumentObject*>& obj, std::ostream& out) {
+
+    DocumentExporting exporting(obj);
     d->hashers.clear();
 
     if(FC_LOG_INSTANCE.isEnabled(FC_LOGLEVEL_LOG)) {
@@ -1719,7 +1720,7 @@ void Document::writeObjects(const std::vector<App::DocumentObject*>& obj,
 
     if(!isExporting(0)) {
         for(auto o : obj) {
-            const auto &outList = o->getOutList(false,true);
+            const auto &outList = o->getOutList(DocumentObject::OutListNoHidden);
             writer.Stream() << writer.ind() 
                 << "<" FC_ELEMENT_OBJECT_DEPS " " FC_ATTR_DEP_OBJ_NAME "=\""
                 << o->getNameInDocument() << "\" " FC_ATTR_DEP_COUNT "=\"" << outList.size();
@@ -1806,7 +1807,7 @@ static void _loadDeps(const std::string &name,
             objs.emplace(name,false);
         return;
     }
-    objs.emplace(name,true);
+    objs[name] = true;
     // If cannot load partial, then recurse to load all children dependency
     for(auto &dep : it->second.deps) {
         auto it = objs.find(dep);
@@ -1986,11 +1987,10 @@ Document::importObjects(Base::XMLReader& reader)
     }
 
     std::vector<App::DocumentObject*> objs = readObjects(reader);
-
-    if(FC_LOG_INSTANCE.isEnabled(FC_LOGLEVEL_LOG)) {
-        for(auto o : objs) {
-            if(o && o->getNameInDocument())
-                FC_LOG("importing " << o->getNameInDocument());
+    for(auto o : objs) {
+        if(o && o->getNameInDocument()) {
+            o->setStatus(App::ObjImporting,true);
+            FC_LOG("importing " << o->getNameInDocument());
         }
     }
 
@@ -2000,6 +2000,11 @@ Document::importObjects(Base::XMLReader& reader)
     afterRestore(objs);
 
     signalFinishImportObjects(objs);
+
+    for(auto o : objs) {
+        if(o && o->getNameInDocument())
+            o->setStatus(App::ObjImporting,false);
+    }
     d->hashers.clear();
     return objs;
 }
@@ -2257,7 +2262,7 @@ void Document::afterRestore(const std::vector<DocumentObject *> &objArray, bool 
     std::set<DocumentObject*> objSet(objArray.begin(),objArray.end());
     std::vector<DocumentObject *> objs;
     try {
-        objs = getDependencyList(objArray.empty()?d->objectArray:objArray,false,true);
+        objs = getDependencyList(objArray.empty()?d->objectArray:objArray,DepSort);
     }catch (Base::Exception &e) {
         e.ReportException();
         objs = d->partialTopologicalSort(objArray.empty()?d->objectArray:objArray);
@@ -2429,19 +2434,18 @@ std::vector<App::DocumentObject*> Document::getInList(const DocumentObject* me) 
 // assumption is broken by the introduction of PropertyXLink which can link to
 // external object.
 //
-// Return true if it found any external dependency
-static bool _buildDependencyList(const std::vector<App::DocumentObject*> &objectArray,
-        bool noExternal, std::vector<App::DocumentObject*> *depObjs, 
+static void _buildDependencyList(const std::vector<App::DocumentObject*> &objectArray,
+        int options, std::vector<App::DocumentObject*> *depObjs, 
         DependencyList *depList, std::map<DocumentObject*,Vertex> *objectMap, 
         bool *touchCheck = 0)
 {
-    bool hasExternal = false;
     std::map<DocumentObject*, std::vector<DocumentObject*> > outLists;
     std::deque<DocumentObject*> objs;
 
     if(objectMap) objectMap->clear();
     if(depList) depList->clear();
 
+    int op = (options & Document::DepNoXLinked)?DocumentObject::OutListNoXLinked:0;
     for (auto obj : objectArray) {
         objs.push_back(obj);
         while(objs.size()) {
@@ -2458,7 +2462,7 @@ static bool _buildDependencyList(const std::vector<App::DocumentObject*> &object
                 if(obj->isTouched() || obj->mustExecute()) {
                     // early termination on touch check
                     *touchCheck = true;
-                    return hasExternal;
+                    return;
                 }
             }
             if(depObjs) depObjs->push_back(obj);
@@ -2466,16 +2470,8 @@ static bool _buildDependencyList(const std::vector<App::DocumentObject*> &object
                 (*objectMap)[obj] = add_vertex(*depList);
 
             auto &outList = outLists[obj];
-            for(auto o : obj->getOutList()) {
-                if(o && o->getNameInDocument()) {
-                    if(o->getDocument()!=obj->getDocument()){
-                        hasExternal = true;
-                        if(noExternal) continue;
-                    }
-                    outList.push_back(o);
-                    objs.push_back(o);
-                }
-            }
+            outList = obj->getOutList(op);
+            objs.insert(objs.end(),outList.begin(),outList.end());
         }
     }
 
@@ -2487,19 +2483,14 @@ static bool _buildDependencyList(const std::vector<App::DocumentObject*> &object
             }
         }
     }
-    return hasExternal;
 }
 
 std::vector<App::DocumentObject*> Document::getDependencyList(
-    const std::vector<App::DocumentObject*>& objectArray, 
-    bool noExternal, bool sort, bool *hasExternal)
+    const std::vector<App::DocumentObject*>& objectArray, int options)
 {
-    bool _hasExternal;
-    if(!hasExternal) hasExternal = &_hasExternal;
-
     std::vector<App::DocumentObject*> ret;
-    if(!sort) {
-        *hasExternal = _buildDependencyList(objectArray,noExternal,&ret,0,0);
+    if(!(options & DepSort)) {
+        _buildDependencyList(objectArray,options,&ret,0,0);
         return ret;
     }
 
@@ -2507,7 +2498,7 @@ std::vector<App::DocumentObject*> Document::getDependencyList(
     std::map<DocumentObject*,Vertex> objectMap;
     std::map<Vertex,DocumentObject*> vertexMap;
 
-    *hasExternal = _buildDependencyList(objectArray,noExternal,0,&depList,&objectMap);
+    _buildDependencyList(objectArray,options,0,&depList,&objectMap);
 
     for(auto &v : objectMap)
         vertexMap[v.second] = v.first;
@@ -2527,19 +2518,27 @@ std::vector<App::DocumentObject*> Document::getDependencyList(
 }
 
 std::vector<App::Document*> Document::getDependentDocuments(bool sort) {
+    return getDependentDocuments({this},sort);
+}
+
+std::vector<App::Document*> Document::getDependentDocuments(
+        std::vector<App::Document*> pending, bool sort) 
+{
     DependencyList depList;
     std::map<Document*,Vertex> docMap;
     std::map<Vertex,Document*> vertexMap;
 
-    std::vector<App::Document*> ret,pending;
+    std::vector<App::Document*> ret;
+    if(pending.empty())
+        return ret;
+
     auto outLists = PropertyXLink::getDocumentOutList();
     std::set<App::Document*> docs;
-    docs.insert(this);
-    pending.push_back(this);
-
-    if(sort)
-        docMap[this] = add_vertex(depList);
-
+    docs.insert(pending.begin(),pending.end());
+    if(sort) {
+        for(auto doc : pending)
+            docMap[doc] = add_vertex(depList);
+    }
     while(pending.size()) {
         auto doc = pending.back();
         pending.pop_back();
@@ -2560,10 +2559,7 @@ std::vector<App::Document*> Document::getDependentDocuments(bool sort) {
     }
 
     if(!sort) {
-        for(auto doc : docs) {
-            if(doc!=this)
-                ret.push_back(doc);
-        }
+        ret.insert(ret.end(),docs.begin(),docs.end());
         return ret;
     }
 
@@ -2802,10 +2798,10 @@ int Document::recompute(const std::vector<App::DocumentObject*> &objs, bool forc
 #else
     vector<DocumentObject*> topoSortedObjects;
     try {
-        topoSortedObjects = getDependencyList(objs.empty()?d->objectArray:objs,false,true);
+        topoSortedObjects = getDependencyList(objs.empty()?d->objectArray:objs,DepSort);
     }catch (Base::Exception &e) {
         e.ReportException();
-        topoSortedObjects = d->partialTopologicalSort(getDependencyList(objs.empty()?d->objectArray:objs,false));
+        topoSortedObjects = d->partialTopologicalSort(getDependencyList(objs.empty()?d->objectArray:objs));
         std::reverse(topoSortedObjects.begin(),topoSortedObjects.end());
     }
 #endif
@@ -3048,24 +3044,16 @@ const char * Document::getErrorDescription(const App::DocumentObject*Obj) const
 // call the recompute of the Feature and handle the exceptions and errors.
 bool Document::_recomputeFeature(DocumentObject* Feat)
 {
-#ifdef FC_LOGFEATUREUPDATE
-    std::clog << "Solv: Executing Feature: " << Feat->getNameInDocument() << std::endl;;
-#endif
+    FC_LOG("Recomputing " << Feat->getDocument()->getName() << '#' << Feat->getNameInDocument());
 
     DocumentObjectExecReturn  *returnCode = 0;
     try {
-        returnCode = Feat->ExpressionEngine.execute();
-        if (returnCode != DocumentObject::StdReturn) {
-            returnCode->Which = Feat;
-            _RecomputeLog.push_back(returnCode);
-    #ifdef FC_DEBUG
-            Base::Console().Error("%s\n",returnCode->Why.c_str());
-    #endif
-            Feat->setError();
-            return true;
+        returnCode = Feat->ExpressionEngine.execute(0);
+        if (returnCode == DocumentObject::StdReturn) {
+            returnCode = Feat->recompute();
+            if(returnCode == DocumentObject::StdReturn)
+                returnCode = Feat->ExpressionEngine.execute(1);
         }
-
-        returnCode = Feat->recompute();
     }
     catch(Base::AbortException &e){
         e.ReportException();
@@ -3100,15 +3088,15 @@ bool Document::_recomputeFeature(DocumentObject* Feat)
     }
 #endif
 
-    // error code
-    if (returnCode == DocumentObject::StdReturn) {
+    if(returnCode == DocumentObject::StdReturn) {
         Feat->resetError();
-    }
-    else {
+    }else{
         returnCode->Which = Feat;
         _RecomputeLog.push_back(returnCode);
 #ifdef FC_DEBUG
-        Base::Console().Error("%s\n",returnCode->Why.c_str());
+        FC_ERR("Failed to recompute " << Feat->getExportName(true) << ": " << returnCode->Why);
+#else
+        FC_LOG("Failed to recompute " << Feat->getExportName(true) << ": " << returnCode->Why);
 #endif
         Feat->setError();
         return true;
@@ -3585,16 +3573,15 @@ void Document::breakDependency(DocumentObject* pcObject, bool clear)
 }
 
 std::vector<DocumentObject*> Document::copyObject(
-    const std::vector<DocumentObject*> &objs, bool recursive, bool keepExternal)
+    const std::vector<DocumentObject*> &objs, bool recursive)
 {
-    bool hasExternal = false;
     std::vector<DocumentObject*> deps;
     if(!recursive)
         deps = objs;
     else
-        deps = getDependencyList(objs,keepExternal,false,&hasExternal);
+        deps = getDependencyList(objs,DepNoXLinked);
 
-    if(keepExternal && hasExternal && !isSaved())
+    if(!isSaved() && PropertyXLink::hasXLink(deps))
         throw Base::RuntimeError(
                 "Document must be saved at least once before link to external objects");
         
@@ -3610,7 +3597,7 @@ std::vector<DocumentObject*> Document::copyObject(
     res.reserve(memsize);
     Base::ByteArrayOStreambuf obuf(res);
     std::ostream ostr(&obuf);
-    this->exportObjects(deps, ostr, keepExternal);
+    this->exportObjects(deps, ostr);
 
     Base::ByteArrayIStreambuf ibuf(res);
     std::istream istr(0);
@@ -3642,7 +3629,7 @@ Document::importLinks(const std::vector<App::DocumentObject*> &objArray)
         }
     }
 
-    objs = App::Document::getDependencyList(objs,false);
+    objs = App::Document::getDependencyList(objs);
     if(objs.empty()) {
         FC_ERR("nothing to import");
         return objs;
@@ -3653,7 +3640,7 @@ Document::importLinks(const std::vector<App::DocumentObject*> &objArray)
         // save stuff to temp file
         Base::ofstream str(fi, std::ios::out | std::ios::binary);
         MergeDocuments mimeView(this);
-        exportObjects(objs, str, false);
+        exportObjects(objs, str);
         str.close();
     }
     Base::ifstream str(fi, std::ios::in | std::ios::binary);
@@ -3834,8 +3821,10 @@ std::string Document::getStandardObjectName(const char *Name, int d) const
     return Base::Tools::getUniqueName(Name, labels, d);
 }
 
-std::vector<DocumentObject*> Document::getObjects() const
+std::vector<DocumentObject*> Document::getObjects(bool includeExternal) const
 {
+    if(includeExternal)
+        return getDependencyList(d->objectArray);
     return d->objectArray;
 }
 
@@ -3980,7 +3969,7 @@ bool Document::mustExecute() const
     }
 
     for (std::vector<DocumentObject*>::const_iterator It = d->objectArray.begin();It != d->objectArray.end();++It)
-        if ((*It)->isTouched() || (*It)->mustExecute())
+        if ((*It)->isTouched() || (*It)->mustExecute()==1)
             return true;
     return false;
 }

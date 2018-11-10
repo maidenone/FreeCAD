@@ -24,13 +24,20 @@
 #ifndef APP_PATH_H
 #define APP_PATH_H
 
+#include <memory>
 #include <vector>
 #include <string>
+#include <set>
 #ifndef BOOST_105400
 #include <boost/any.hpp>
 #else
 #include <boost_any_1_55.hpp>
 #endif
+#include <CXX/Objects.hxx>
+
+namespace Base {
+class PythonVariables;
+}
 
 namespace App
 {
@@ -39,6 +46,8 @@ class Property;
 class Document;
 class PropertyContainer;
 class DocumentObject;
+class Expression;
+typedef Base::PythonVariables PythonVariables;
 
 AppExport std::string quote(const std::string &input);
 
@@ -47,6 +56,7 @@ class AppExport ObjectIdentifier {
 public:
 
     class String {
+        friend class ObjectIdentifier;
 
     public:
 
@@ -103,14 +113,18 @@ public:
         enum typeEnum {
             SIMPLE,
             MAP,
-            ARRAY
+            ARRAY,
+            CALLABLE,
+            CALLABLE_MAP,
+            CALLABLE_ARRAY,
         } ;
 
     public:
 
         // Constructors
 
-        Component(const String &_component, typeEnum _type = SIMPLE, int _index = -1, String _key = String());
+        Component(const String &_component, typeEnum _type = SIMPLE, int _index = -1, String _key = String(),
+                const std::vector<Expression*> &args = {});
 
         static Component SimpleComponent(const char * _component);
 
@@ -120,6 +134,13 @@ public:
 
         static Component MapComponent(const String &_component, const String &_key);
 
+        static Component CallableComponent(const std::string &name, 
+                const std::vector<Expression*> &args);
+        static Component CallableComponent(const std::string &name, 
+                const std::vector<Expression*> &args, int index);
+        static Component CallableComponent(const std::string &name, 
+                const std::vector<Expression*> &args, const String &_key);
+
         // Type queries
 
         bool isSimple() const { return type == SIMPLE; }
@@ -128,17 +149,19 @@ public:
 
         bool isArray() const { return type == ARRAY; }
 
+        bool isCallable() const {
+            return type==CALLABLE || type==CALLABLE_ARRAY || type==CALLABLE_MAP;
+        }
+
         // Accessors
 
-        std::string toString() const;
+        std::string toString(Base::PythonVariables *vars=0) const;
 
         std::string getName() const { return name.getString(); }
 
         std::size_t getIndex() const { return static_cast<std::size_t>(index); }
 
         String getKey() const { return key; }
-
-        bool getKeyIsString() const { return keyIsString; }
 
         // Operators
 
@@ -150,23 +173,24 @@ public:
         typeEnum type;
         int index;
         String key;
-        bool keyIsString;
+        std::vector<std::shared_ptr<Expression> > arguments;
 
         friend class ObjectIdentifier;
 
     };
 
-    ObjectIdentifier(const App::PropertyContainer * _owner = 0, const std::string & property = std::string());
+    ObjectIdentifier(const App::PropertyContainer * _owner = 0, 
+            const std::string & property = std::string(), int index=-1);
 
-    ObjectIdentifier(const App::Property & prop);
+    ObjectIdentifier(const App::Property & prop, int index=-1);
 
     virtual ~ObjectIdentifier() {}
 
     // Components
-    void addComponent(const Component &c) { components.push_back(c); }
+    void addComponent(const Component &c) { components.push_back(c); _cache.clear(); }
 
     template<typename C>
-    void addComponents(const C &cs) { components.insert(components.end(), cs.begin(), cs.end()); }
+    void addComponents(const C &cs) { components.insert(components.end(), cs.begin(), cs.end()); _cache.clear(); }
 
     const std::string getPropertyName() const;
 
@@ -182,7 +206,16 @@ public:
 
     std::string toEscapedString() const;
 
-    App::Property *getProperty() const;
+    enum PseudoPropertyType {
+        PseudoNone,
+        PseudoShape,
+        PseudoPlacement,
+        PseudoMatrix,
+        PseudoLinkPlacement,
+        PseudoLinkMatrix,
+        PseudoSelf,
+    };
+    App::Property *getProperty(PseudoPropertyType *ptype=0) const;
 
     App::ObjectIdentifier canonicalPath() const;
 
@@ -192,7 +225,11 @@ public:
 
     const String getDocumentName() const;
 
-    void setDocumentObjectName(const String & name, bool force = false);
+    void setDocumentObjectName(const String & name, bool force = false, 
+            const String &subname = String());
+
+    void setDocumentObjectName(const App::DocumentObject *obj, bool force = false, 
+            const String &subname = String());
 
     const String getDocumentObjectName() const;
 
@@ -207,6 +244,8 @@ public:
     App::Document *getDocument(String name = String()) const;
 
     App::DocumentObject *getDocumentObject() const;
+
+    void getDeps(std::set<ObjectIdentifier> &props) const;
 
     std::vector<std::string> getStringList() const;
 
@@ -224,7 +263,7 @@ public:
 
     // Getter
 
-    boost::any getValue() const;
+    boost::any getValue(bool checkCallable=false) const;
 
     // Setter; is const because it does not alter the object state,
     // but does have a aide effect.
@@ -237,6 +276,8 @@ public:
 
     std::string resolveErrorString() const;
 
+    std::size_t hash() const;
+
 protected:
 
     struct ResolveResults {
@@ -248,13 +289,24 @@ protected:
         String resolvedDocumentName;
         App::DocumentObject * resolvedDocumentObject;
         String resolvedDocumentObjectName;
+        String subObjectName;
+        App::DocumentObject * resolvedSubObject;
         App::Property * resolvedProperty;
         std::string propertyName;
+        PseudoPropertyType propertyType;
 
         std::string resolveErrorString() const;
+        void getProperty(const ObjectIdentifier &oi);
     };
 
-    std::string getPythonAccessor() const;
+    friend class ResolveResults;
+
+    App::Property *resolveProperty(const App::DocumentObject *obj, 
+        const char *propertyName, App::DocumentObject *&sobj,PseudoPropertyType &ptype) const;
+
+    std::string getSubPathStr(const ResolveResults &result, PythonVariables *var=0) const;
+
+    std::string getPythonAccessor(const ResolveResults &rs, PythonVariables *vars=0) const;
 
     void resolve(ResolveResults & results) const;
 
@@ -265,11 +317,17 @@ protected:
     bool documentNameSet;
     String  documentObjectName;
     bool documentObjectNameSet;
+    String  subObjectName;
     std::vector<Component> components;
 
+private:
+    mutable std::string _cache; // Cached string represstation of this identifier
+    mutable std::size_t _hash; // Cached hash of this string
 };
 
-std::size_t AppExport hash_value(const App::ObjectIdentifier & path);
+inline std::size_t hash_value(const App::ObjectIdentifier & path) {
+    return path.hash();
+}
 
 }
 

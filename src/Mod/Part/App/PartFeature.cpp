@@ -499,40 +499,32 @@ TopoShape Feature::getTopoShape(const App::DocumentObject *obj, const char *subn
     if(link && link->getElementCountValue()) {
         linked = link->getTrueLinkedObject(false);
         if(linked && linked!=owner) {
-            baseShape = getTopoShape(linked);
-            baseShape.setShape(baseShape.getShape().Located(TopLoc_Location()),false);
-            baseShape.initCache(1);
+            Base::Matrix4D linkMat;
+            baseShape = getTopoShape(linked,0,false,0,0,false,false);
             if(!link->getShowElementValue())
                 baseShape.reTagElementMap(owner->getID(),owner->getDocument()->getStringHasher());
         }
     }
-    for(const auto &name : owner->getSubObjects()) {
-        if(name.empty()) continue;
+    for(auto &sub : owner->getSubObjects()) {
+        if(sub.empty()) continue;
         int visible;
-        std::string _name;
-        const char *sub;
-        const char *childName;
-        if(name[name.size()-1] == '.') {
-            sub = name.c_str();
-            _name = name.substr(0,name.size()-1);
-            childName = _name.c_str();
-        }else{
-            childName = name.c_str();
-            _name = name + '.';
-            sub = _name.c_str();
-        }
-        visible = owner->isElementVisible(childName);
+        if(sub[sub.size()-1] != '.')
+            sub += '.';
+        std::string childName;
+        App::DocumentObject *parent=0;
+        Base::Matrix4D mat;
+        auto subObj = owner->resolve(sub.c_str(), &parent, &childName,0,0,&mat,false);
+        if(!parent && !subObj)
+            continue;
+        visible = parent->isElementVisible(childName.c_str());
         if(visible==0)
             continue;
-        DocumentObject *subObj = 0;
         TopoShape shape;
         if(baseShape.isNull()) {
-            shape = getTopoShape(owner,sub,false,0,&subObj,false,false);
+            shape = getTopoShape(owner,sub.c_str(),false,0,&subObj,false,false);
             if(shape.isNull())
                 continue;
         }else{
-            Base::Matrix4D mat;
-            subObj = owner->getSubObject(sub,0,&mat);
             if(link && !link->getShowElementValue())
                 shape = baseShape.makETransform(mat,(TopoShape::indexPostfix()+childName).c_str());
             else {

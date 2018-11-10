@@ -59,17 +59,15 @@ public:
     }
 
     void visit(Expression * node) {
-        VariableExpression *expr = freecad_dynamic_cast<VariableExpression>(node);
-
-        if (expr) {
+        std::set<ObjectIdentifier> ids;
+        node->getDeps(ids);
+        for(auto &id : ids) {
             try {
-                const App::Property * prop = expr->getProperty();
-                App::DocumentObject * docObj = freecad_dynamic_cast<App::DocumentObject>(prop->getContainer());
-
-                if (docObj) {
-                    setExpressionChanged();
-                    docDeps.insert(docObj);
-                }
+                App::DocumentObject * docObj = id.getDocumentObject();
+                if (!docObj || docObj == prop.getContainer())
+                    continue;
+                setExpressionChanged();
+                docDeps.insert(docObj);
             }
             catch (const Base::Exception &) {
                 // Ignore this type of exception; it means that the property was not found, which is ok here
@@ -958,21 +956,25 @@ void PropertySheet::addDependencies(CellAddress key)
 
     std::set<ObjectIdentifier>::const_iterator i = expressionDeps.begin();
     while (i != expressionDeps.end()) {
-        const Property * prop = i->getProperty();
+        ObjectIdentifier::PseudoPropertyType ptype;
+        const Property * prop = i->getProperty(&ptype);
         const App::DocumentObject * docObj = i->getDocumentObject();
         App::Document * doc = i->getDocument();
 
         std::string docName = doc ? doc->Label.getValue() : i->getDocumentName().getString();
         std::string docObjName = docName + "#" + (docObj ? docObj->getNameInDocument() : i->getDocumentObjectName().getString());
-        std::string propName = docObjName + "." + i->getPropertyName();
+        std::string propName = docObjName + ".";
 
-        if (!prop)
+        if (!prop) {
             cell->setResolveException("Unresolved dependency");
-        else {
-            App::DocumentObject * docObject = freecad_dynamic_cast<App::DocumentObject>(prop->getContainer());
+            if(docObj == owner)
+                propName += i->getPropertyName();
+        } else {
+            if(ptype==App::ObjectIdentifier::PseudoNone && prop->getContainer()==docObj)
+                propName += i->getPropertyName();
 
-            documentObjectName[docObject] = docObject->Label.getValue();
-            documentName[docObject->getDocument()] = docObject->getDocument()->Label.getValue();
+            documentObjectName[docObj] = docObj->Label.getValue();
+            documentName[docObj->getDocument()] = docObj->getDocument()->Label.getValue();
         }
 
         // Observe document to trach changes to the property
@@ -1063,10 +1065,9 @@ void PropertySheet::removeDependencies(CellAddress key)
   *
   */
 
-void PropertySheet::recomputeDependants(const Property *prop)
+void PropertySheet::recomputeDependants(const App::DocumentObject *owner, const Property *prop)
 {
-    App::DocumentObject * owner = freecad_dynamic_cast<App::DocumentObject>(prop->getContainer());
-    const char * name = owner->getPropertyName(prop);
+    const char * name = prop->getName();
 
     assert(name != 0);
 
@@ -1075,19 +1076,22 @@ void PropertySheet::recomputeDependants(const Property *prop)
         const char * nameInDoc = owner->getNameInDocument();
 
         if (nameInDoc) {
-            // Recompute cells that depend on this cell
-            std::string fullName = std::string(docName) + "#" + std::string(nameInDoc) + "." + std::string(name);
-            std::map<std::string, std::set< CellAddress > >::const_iterator i = propertyNameToCellMap.find(fullName);
-
-            if (i == propertyNameToCellMap.end())
-                return;
-
-            std::set<CellAddress>::const_iterator j = i->second.begin();
-            std::set<CellAddress>::const_iterator end = i->second.end();
-
-            while (j != end) {
-                setDirty(*j);
-                ++j;
+            // First, search without actual property name for sub-object/link
+            // references, i.e indirect references. The depenedecies of these
+            // references are too complex to track exactly, so we only track the
+            // top parent object instead, and mark the involved expression
+            // whenever the top parent changes.
+            std::string fullName = std::string(docName) + "#" + std::string(nameInDoc) + ".";
+            auto it = propertyNameToCellMap.find(fullName);
+            if (it != propertyNameToCellMap.end()) {
+                for(auto &cell : it->second)
+                    setDirty(cell);
+            }
+            // Now, we check for direct property references
+            it = propertyNameToCellMap.find(fullName + name);
+            if (it != propertyNameToCellMap.end()) {
+                for(auto &cell : it->second)
+                    setDirty(cell);
             }
         }
     }
@@ -1179,31 +1183,6 @@ void PropertySheet::deletedDocumentObject(const App::DocumentObject *docObj)
 void PropertySheet::documentSet()
 {
     documentName[owner->getDocument()] = owner->getDocument()->Label.getValue();
-}
-
-void PropertySheet::recomputeDependants(const App::DocumentObject *docObj)
-{
-    const char * docName = docObj->getDocument()->Label.getValue();
-    const char * docObjName = docObj->getNameInDocument();
-
-
-    // Recompute cells that depend on this cell
-    std::string fullName = std::string(docName) + "#" + std::string(docObjName);
-    std::map<std::string, std::set< CellAddress > >::const_iterator i = documentObjectToCellMap.find(fullName);
-
-    if (i == documentObjectToCellMap.end())
-        return;
-
-    // Touch to force recompute
-    touch();
-    
-    std::set<CellAddress>::const_iterator j = i->second.begin();
-    std::set<CellAddress>::const_iterator end = i->second.end();
-
-    while (j != end) {
-        setDirty((*j));
-        ++j;
-    }
 }
 
 const std::set<CellAddress> &PropertySheet::getDeps(const std::string &name) const

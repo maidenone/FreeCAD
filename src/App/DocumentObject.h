@@ -56,6 +56,7 @@ enum ObjectStatus {
     PartialObject = 9,
     PendingRecompute = 10, // set by Document, indicating the object is in recomputation queue
     PendingRemove = 11, // set by Document, indicating the object is in pending for remove after recompute
+    ObjImporting = 12, // Mark the object as importing
     Expand = 16,
 };
 
@@ -90,6 +91,7 @@ class AppExport DocumentObject: public App::TransactionalObject
 public:
 
     PropertyString Label;
+    PropertyString Label2;
     PropertyExpressionEngine ExpressionEngine;
 
     /// Allow control visibility status in App name space
@@ -179,8 +181,17 @@ public:
         an DAG (directed acyclic graph). 
     */
     //@{
+    /// OutList options
+    enum OutListOption {
+        /// Do not include link from expression engine
+        OutListNoExpression = 1,
+        /// Do not hide any link (i.e. include links with LinkScopeHidden)
+        OutListNoHidden = 2,
+        /// Do not include link from PropertyXLink
+        OutListNoXLinked = 4,
+    };
     /// returns a list of objects this object is pointing to by Links
-    std::vector<App::DocumentObject*> getOutList(bool noExpression=false, bool noHidden=false) const;
+    std::vector<App::DocumentObject*> getOutList(int options=0) const;
     /// returns a list of objects linked by the property
     std::vector<App::DocumentObject*> getOutListOfProperty(App::Property*) const;
     /// returns a list of objects this object is pointing to by Links and all further descended
@@ -228,7 +239,7 @@ public:
 
     /** Return the element map version of the geometry data stored in the given property
      */
-    virtual std::string getElementMapVersion(const App::Property *prop) const;
+    virtual std::string getElementMapVersion(const App::Property *prop, bool restored=false) const;
        
 public:
     /** mustExecute
@@ -315,6 +326,9 @@ public:
      */
     virtual std::vector<std::string> getSubObjects(int reason=0) const;
 
+    ///Obtain top parents and subnames of this object using its InList
+    std::map<App::DocumentObject*,std::string> getParents(int depth=0) const;
+
     /** Return the linked object with optional transformation
      * 
      * @param recurse: If false, return the immediate linked object, or else
@@ -346,6 +360,9 @@ public:
      * This function is is called before onBeforeChange()
      */
     virtual void onBeforeChangeLabel(std::string &newLabel) {(void)newLabel;}
+
+    /// Return a list object to be copied together with this object
+    virtual std::vector<App::DocumentObject*> getCopyObjects() const { return {}; }
 
     friend class Document;
     friend class Transaction;

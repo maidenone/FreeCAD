@@ -280,7 +280,8 @@ PROPERTY_SOURCE(SketcherGui::ViewProviderSketch, PartGui::ViewProvider2DObject)
 
 
 ViewProviderSketch::ViewProviderSketch()
-  : edit(0),
+  : SelectionObserver(false),
+    edit(0),
     Mode(STATUS_NONE),
     visibleInformationChanged(true),
     combrepscalehyst(0),
@@ -377,6 +378,12 @@ void ViewProviderSketch::activateHandler(DrawSketchHandler *newHandler)
     Mode = STATUS_SKETCH_UseHandler;
     edit->sketchHandler->sketchgui = this;
     edit->sketchHandler->activated(this);
+
+    // make sure receiver has focus so immediately pressing Escape will be handled by
+    // ViewProviderSketch::keyPressed() and dismiss the active handler, and not the entire
+    // sketcher editor
+    Gui::MDIView *mdi = Gui::Application::Instance->activeDocument()->getActiveView();
+    mdi->setFocus();
 }
 
 void ViewProviderSketch::deactivateHandler()
@@ -1459,6 +1466,10 @@ void ViewProviderSketch::onSelectionChanged(const Gui::SelectionChanges& msg)
 {
     // are we in edit?
     if (edit) {
+        // ignore external object
+        if(msg.ObjName.size() && msg.DocName.size() && msg.DocName!=getObject()->getDocument()->getName())
+            return;
+
         bool handled=false;
         if (Mode == STATUS_SKETCH_UseHandler) {
             handled = edit->sketchHandler->onSelectionChanged(msg);
@@ -3719,14 +3730,12 @@ void ViewProviderSketch::draw(bool temp /*=false*/, bool rebuildinformationlayer
 
             }
 
-            double temprepscale = ( 0.5 * maxdisttocenterofmass ) / maxcurv; // just a factor to make a comb reasonably visible
-            
-            if( temprepscale > combrepscale )
+            double temprepscale = 0;
+            if (maxcurv > 0)
+                temprepscale = (0.5 * maxdisttocenterofmass) / maxcurv; // just a factor to make a comb reasonably visible
+
+            if (temprepscale > combrepscale)
                 combrepscale = temprepscale;
-            
-            
-        }
-        else {
         }
     }
     
@@ -3915,7 +3924,7 @@ void ViewProviderSketch::draw(bool temp /*=false*/, bool rebuildinformationlayer
             try {
                 spline->normalAt(paramlist[i],normallist[i]);
             }
-            catch(Base::Exception) {
+            catch(Base::Exception&) {
                 normallist[i] = Base::Vector3d(0,0,0);
             }
 
@@ -5117,7 +5126,7 @@ Restart:
                     break;
             }
 
-        } catch (Base::Exception e) {
+        } catch (Base::Exception &e) {
             Base::Console().Error("Exception during draw: %s\n", e.what());
         } catch (...){
             Base::Console().Error("Exception during draw: unknown\n");
@@ -5466,6 +5475,8 @@ bool ViewProviderSketch::setEdit(int ModNum)
     // clear the selection (convenience)
     Gui::Selection().clearSelection();
     Gui::Selection().rmvPreselect();
+    
+    this->attachSelection();
 
     // create the container for the additional edit data
     assert(!edit);
@@ -5907,6 +5918,7 @@ void ViewProviderSketch::unsetEdit(int ModNum)
 
         delete edit;
         edit = 0;
+        this->detachSelection();
 
         try {
             // and update the sketch

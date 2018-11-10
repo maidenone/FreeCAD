@@ -66,6 +66,7 @@
 #include "Selection.h"
 #include "WaitCursor.h"
 #include "Thumbnail.h"
+#include "ViewProviderLink.h"
 
 FC_LOG_LEVEL_INIT("Gui::Document",true,true)
 
@@ -269,7 +270,7 @@ bool Document::setEdit(Gui::ViewProvider* p, int ModNum, const char *subname)
     }
 
     std::string _subname;
-    if(!subname) {
+    if(!subname || !subname[0]) {
         // No subname reference is given, we try to extract one from the current
         // selection in order to obtain the correct transformation matrix below
         auto sels = Gui::Selection().getCompleteSelection(false);
@@ -362,7 +363,7 @@ bool Document::setEdit(Gui::ViewProvider* p, int ModNum, const char *subname)
     View3DInventor *activeView = dynamic_cast<View3DInventor *>(getActiveView());
     // if the currently active view is not the 3d view search for it and activate it
     if (!activeView) {
-        activeView = dynamic_cast<View3DInventor *>(getViewOfViewProvider(p));
+        activeView = dynamic_cast<View3DInventor *>(getViewOfViewProvider(vp));
         if(!activeView){
             FC_ERR("cannot edit without active view");
             return false;
@@ -833,7 +834,9 @@ void Document::slotSkipRecompute(const App::Document& doc, const std::vector<App
 {
     if (d->_pcDocument != &doc)
         return;
-    if(objs.size()>1 || App::GetApplication().getActiveDocument()!=&doc)
+    if(objs.size()>1 || 
+       App::GetApplication().getActiveDocument()!=&doc || 
+       !doc.testStatus(App::Document::AllowPartialRecompute))
         return;
     App::DocumentObject *obj = 0;
     auto editDoc = Application::Instance->editDocument();
@@ -870,6 +873,8 @@ void Document::addViewProvider(Gui::ViewProviderDocumentObject* vp)
 
 void Document::setModified(bool b)
 {
+    if(d->_isModified == b)
+        return;
     d->_isModified = b;
     
     std::list<MDIView*> mdis = getMDIViews();
@@ -1023,6 +1028,50 @@ bool Document::saveAs(void)
     else {
         getMainWindow()->showMessage(QObject::tr("Saving aborted"), 2000);
         return false;
+    }
+}
+
+void Document::saveAll() {
+    std::vector<App::Document*> docs;
+    try {
+        docs = App::Document::getDependentDocuments(App::GetApplication().getDocuments(),true);
+    }catch(Base::Exception &e) {
+        e.ReportException();
+        int ret = QMessageBox::critical(getMainWindow(), QObject::tr("Failed to save document"),
+                QObject::tr("Documents contains cyclic dependices. Do you still want to save them?"),
+                QMessageBox::Yes,QMessageBox::No);
+        if(ret!=QMessageBox::Yes)
+            return;
+        docs = App::GetApplication().getDocuments();
+    }
+    std::map<App::Document *, bool> dmap;
+    for(auto doc : docs)
+        dmap[doc] = doc->mustExecute();
+    for(auto doc : docs) {
+        if(doc->testStatus(App::Document::PartialDoc))
+            continue;
+        auto gdoc = Application::Instance->getDocument(doc);
+        if(!gdoc)
+            continue;
+        if(!doc->isSaved()) {
+            if(!gdoc->saveAs())
+                break;
+        }
+        Gui::WaitCursor wc;
+
+        try {
+            // Changed 'mustExecute' status may be triggered by saving external document
+            if(!dmap[doc] && doc->mustExecute())
+                Command::doCommand(Command::Doc,"App.getDocument('%s').recompute()",doc->getName());
+            Command::doCommand(Command::Doc,"App.getDocument('%s').save()",doc->getName());
+            gdoc->setModified(false);
+        } catch (const Base::Exception& e) {
+            QMessageBox::critical(getMainWindow(), 
+                    QObject::tr("Failed to save document") + 
+                        QString::fromLatin1(": %1").arg(QString::fromUtf8(doc->getName())), 
+                    QString::fromLatin1(e.what()));
+            break;
+        }
     }
 }
 
@@ -1217,7 +1266,8 @@ void Document::slotFinishRestoreDocument(const App::Document& doc)
     for (it = d->_ViewProviderMap.begin(); it != d->_ViewProviderMap.end(); ++it) {
         if(it->first->isTouched()) {
             isModified = true;
-            FC_LOG("'" << it->first->getNameInDocument() << "' is touched after restore");
+            FC_LOG("'" << getDocument()->getName() << '#'
+                    << it->first->getNameInDocument() << "' is touched after restore");
         }
     }
 
@@ -1762,6 +1812,45 @@ MDIView* Document::getActiveView(void) const
         active = mdis.back();
 
     return active;
+}
+
+MDIView *Document::setActiveView(ViewProviderDocumentObject *vp, Base::Type typeId) const {
+    MDIView *view = 0;
+    if(!vp)
+        view = getActiveView();
+    else{
+        view = vp->getMDIView();
+        if(!view) {
+            auto obj = vp->getObject();
+            if(!obj)
+                view = getActiveView();
+            else {
+                auto linked = obj->getLinkedObject(true);
+                if(linked!=obj) {
+                    auto vpLinked = dynamic_cast<ViewProviderDocumentObject*>(
+                                Application::Instance->getViewProvider(linked));
+                    if(vpLinked)
+                        view = vpLinked->getMDIView();
+                }
+                if(!view && typeId.isBad())
+                    typeId = View3DInventor::getClassTypeId();
+            }
+        }
+    }
+    if(!view || (!typeId.isBad() && !view->isDerivedFrom(typeId))) {
+        view = 0;
+        for (auto *v : d->baseViews) {
+            if(v->isDerivedFrom(MDIView::getClassTypeId()) && 
+               (typeId.isBad() || v->isDerivedFrom(typeId))) 
+            {
+                view = static_cast<MDIView*>(v);
+                break;
+            }
+        }
+    }
+    if(view)
+        getMainWindow()->setActiveWindow(view);
+    return view;
 }
 
 Gui::MDIView* Document::getViewOfNode(SoNode* node) const

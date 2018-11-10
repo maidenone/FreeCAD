@@ -247,6 +247,7 @@ public:
     /// adds this command to arbitrary widgets
     void addTo(QWidget *);
     void addToGroup(ActionGroup *, bool checkable);
+    void addToGroup(ActionGroup *);
     //@}
 
 
@@ -380,6 +381,18 @@ public:
     void adjustCameraPosition();
     //@}
 
+    /// helper class to disable python console log
+    class LogDisabler {
+    public:
+        LogDisabler() {
+            ++Command::_busy;
+        }
+        ~LogDisabler() {
+            --Command::_busy;
+        }
+    };
+    friend class LogDisabler;
+
 protected:
     enum CmdType {
         AlterDoc       = 1,  /**< Command change the Document */
@@ -399,8 +412,10 @@ protected:
     const char* sName;
     const char* sHelpUrl;
     int         eType;
+    bool        bCanLog;
     //@}
 private:
+    static int _busy;
     bool bEnabled;
     static bool _blockCmd;
 };

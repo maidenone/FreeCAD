@@ -95,6 +95,8 @@ class Snapper:
         self.holdTracker = None
         self.holdPoints = []
         self.running = False
+        self.callbackClick = None
+        self.callbackMove = None
         
         # the snapmarker has "dot","circle" and "square" available styles
         if self.snapStyle:
@@ -259,10 +261,17 @@ class Snapper:
             return fp
 
         else:
-
             # we have an object to snap to
 
-            obj = FreeCAD.ActiveDocument.getObject(self.snapInfo['Object'])
+            shape = None
+            parent = self.snapInfo.get('ParentObject',None)
+            if parent:
+                subname = self.snapInfo['SubName']
+                obj = parent.getSubObject(subname,retType=1)
+            else:
+                obj = FreeCAD.ActiveDocument.getObject(self.snapInfo['Object'])
+                parent = obj
+                subname = self.snapInfo['Component']
             if not obj:
                 self.spoint = cstr(point)
                 self.running = False
@@ -292,11 +301,9 @@ class Snapper:
                 # active snapping
                 comp = self.snapInfo['Component']
 
-                if obj.isDerivedFrom("Part::Feature"):
-                    
-                    # applying global placements
-                    shape = obj.Shape.copy()
-                    shape.Placement = obj.getGlobalPlacement()
+                shape = Part.getShape(parent,subname,
+                            needSubElement=True,noElementMap=True)
+                if not shape.isNull():
                     
                     snaps.extend(self.snapToSpecials(obj,lastpoint,eline))
                     
@@ -307,40 +314,35 @@ class Snapper:
                         # special snapping for Arch building parts: add the location
                         snaps.append([obj.Placement.Base,'endpoint',self.toWP(obj.Pacement.Base)])
 
-                    if (not self.maxEdges) or (len(shape.Edges) <= self.maxEdges):
-                        if "Edge" in comp:
-                            # we are snapping to an edge
-                            en = int(comp[4:])-1
-                            if len(shape.Edges) > en:
-                                edge = shape.Edges[en]
-                                snaps.extend(self.snapToEndpoints(edge))
-                                snaps.extend(self.snapToMidpoint(edge))
-                                snaps.extend(self.snapToPerpendicular(edge,lastpoint))
-                                snaps.extend(self.snapToIntersection(edge))
-                                snaps.extend(self.snapToElines(edge,eline))
-                                
-                                et = DraftGeomUtils.geomType(edge)
-                                if et == "Circle":
-                                    # the edge is an arc, we have extra options
-                                    snaps.extend(self.snapToAngles(edge))
-                                    snaps.extend(self.snapToCenter(edge))
-                                elif et == "Ellipse":
-                                    # extra ellipse options
-                                    snaps.extend(self.snapToCenter(edge))
-                        elif "Face" in comp:
-                            en = int(comp[4:])-1
-                            if len(shape.Faces) > en:
-                                face = shape.Faces[en]
-                                snaps.extend(self.snapToFace(face))
-                        elif "Vertex" in comp:
-                            # directly snapped to a vertex
-                            snaps.append(self.snapToVertex(self.snapInfo,active=True))
-                        elif comp == '':
-                            # workaround for the new view provider
-                            snaps.append(self.snapToVertex(self.snapInfo,active=True))
-                        else:
-                            # all other cases (face, etc...) default to passive snap
-                            snapArray = [self.snapToVertex(self.snapInfo)]
+                    if "Edge" in comp:
+                        # we are snapping to an edge
+                        edge = shape.Edge1
+                        snaps.extend(self.snapToEndpoints(edge))
+                        snaps.extend(self.snapToMidpoint(edge))
+                        snaps.extend(self.snapToPerpendicular(edge,lastpoint))
+                        snaps.extend(self.snapToIntersection(edge))
+                        snaps.extend(self.snapToElines(edge,eline))
+                        
+                        et = DraftGeomUtils.geomType(edge)
+                        if et == "Circle":
+                            # the edge is an arc, we have extra options
+                            snaps.extend(self.snapToAngles(edge))
+                            snaps.extend(self.snapToCenter(edge))
+                        elif et == "Ellipse":
+                            # extra ellipse options
+                            snaps.extend(self.snapToCenter(edge))
+                    elif "Face" in comp:
+                        face = shape.Face1
+                        snaps.extend(self.snapToFace(face))
+                    elif "Vertex" in comp:
+                        # directly snapped to a vertex
+                        snaps.append(self.snapToVertex(self.snapInfo,active=True))
+                    elif comp == '':
+                        # workaround for the new view provider
+                        snaps.append(self.snapToVertex(self.snapInfo,active=True))
+                    else:
+                        # all other cases (face, etc...) default to passive snap
+                        snapArray = [self.snapToVertex(self.snapInfo)]
                             
                 elif Draft.getType(obj) == "Dimension":
                     # for dimensions we snap to their 2 points:
@@ -1135,8 +1137,10 @@ class Snapper:
         FreeCADGui.Snapper.getPoint(callback=cb)
 
         If the callback function accepts more than one argument, it will also receive
-        the last snapped object. Finally, a pyqt dialog can be passed as extra taskbox.
-
+        the last snapped object. Finally, a qt widget can be passed as an extra taskbox.
+        
+        If getPoint() is invoked without any argument, nothing is done but the callbacks
+        are removed, so it can be used as a cancel function.
         """
 
         import inspect
@@ -1145,6 +1149,14 @@ class Snapper:
         self.lastSnappedObject = None
         self.ui = FreeCADGui.draftToolBar
         self.view = Draft.get3DView()
+
+        # remove any previous leftover callbacks
+        if self.callbackClick:
+            self.view.removeEventCallbackPivy(coin.SoMouseButtonEvent.getClassTypeId(),self.callbackClick)
+        if self.callbackMove:
+            self.view.removeEventCallbackPivy(coin.SoLocation2Event.getClassTypeId(),self.callbackMove)
+        self.callbackClick = None
+        self.callbackMove = None
 
         def move(event_cb):
             event = event_cb.getEvent()
@@ -1171,8 +1183,12 @@ class Snapper:
                     accept()
 
         def accept():
-            self.view.removeEventCallbackPivy(coin.SoMouseButtonEvent.getClassTypeId(),self.callbackClick)
-            self.view.removeEventCallbackPivy(coin.SoLocation2Event.getClassTypeId(),self.callbackMove)
+            if self.callbackClick:
+                self.view.removeEventCallbackPivy(coin.SoMouseButtonEvent.getClassTypeId(),self.callbackClick)
+            if self.callbackMove:
+                self.view.removeEventCallbackPivy(coin.SoLocation2Event.getClassTypeId(),self.callbackMove)
+            self.callbackClick = None
+            self.callbackMove = None
             obj = FreeCADGui.Snapper.lastSnappedObject
             FreeCADGui.Snapper.off()
             self.ui.offUi()
@@ -1184,8 +1200,12 @@ class Snapper:
             self.pt = None
 
         def cancel():
-            self.view.removeEventCallbackPivy(coin.SoMouseButtonEvent.getClassTypeId(),self.callbackClick)
-            self.view.removeEventCallbackPivy(coin.SoLocation2Event.getClassTypeId(),self.callbackMove)
+            if self.callbackClick:
+                self.view.removeEventCallbackPivy(coin.SoMouseButtonEvent.getClassTypeId(),self.callbackClick)
+            if self.callbackMove:
+                self.view.removeEventCallbackPivy(coin.SoLocation2Event.getClassTypeId(),self.callbackMove)
+            self.callbackClick = None
+            self.callbackMove = None
             FreeCADGui.Snapper.off()
             self.ui.offUi()
             if callback:
@@ -1193,11 +1213,12 @@ class Snapper:
                     callback(None,None)
                 else:
                     callback(None)
-            
+
         # adding callback functions
-        self.ui.pointUi(cancel=cancel,getcoords=getcoords,extra=extradlg,rel=bool(last))
-        self.callbackClick = self.view.addEventCallbackPivy(coin.SoMouseButtonEvent.getClassTypeId(),click)
-        self.callbackMove = self.view.addEventCallbackPivy(coin.SoLocation2Event.getClassTypeId(),move)
+        if callback:
+            self.ui.pointUi(cancel=cancel,getcoords=getcoords,extra=extradlg,rel=bool(last))
+            self.callbackClick = self.view.addEventCallbackPivy(coin.SoMouseButtonEvent.getClassTypeId(),click)
+            self.callbackMove = self.view.addEventCallbackPivy(coin.SoLocation2Event.getClassTypeId(),move)
 
     def makeSnapToolBar(self):
         "builds the Snap toolbar"

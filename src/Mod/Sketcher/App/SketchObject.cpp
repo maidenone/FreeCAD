@@ -242,6 +242,14 @@ void SketchObject::buildShape() {
                         name+std::to_string(i+1),false).c_str()));
     }
     Shape.setValue(Part::TopoShape().makEWires(shapes,TOPOP_SKETCH));
+
+    for(auto obj : Exports.getValues()) {
+        auto exp = dynamic_cast<SketchExport*>(obj);
+        if(!exp || exp->testStatus(App::ObjectStatus::Recompute2))
+            continue;
+        if(exp->update() && exp->SyncPlacement.getValue() && !exp->positionBySupport())
+            exp->Placement.setValue(Placement.getValue());
+    }
 }
 
 static bool hasSketchMarker(const char *name) {
@@ -322,14 +330,6 @@ int SketchObject::solve(bool updateGeoAfterSolving/*=true*/)
         Geometry.setValues(geomlist);
         for (std::vector<Part::Geometry *>::iterator it = geomlist.begin(); it != geomlist.end(); ++it)
             if (*it) delete *it;
-
-        for(auto obj : Exports.getValues()) {
-            auto exp = dynamic_cast<SketchExport*>(obj);
-            if(!exp || exp->testStatus(App::ObjectStatus::Recompute2))
-                continue;
-            if(exp->update() && exp->SyncPlacement.getValue() && !exp->positionBySupport())
-                exp->Placement.setValue(Placement.getValue());
-        }
     }
     else if(err <0) {
         // if solver failed, invalid constraints were likely added before solving
@@ -5234,7 +5234,7 @@ void SketchObject::validateExternalLinks(void)
                 refSubShape = refShape.getSubShape(SubElement.c_str());
             }
         }
-        catch (Standard_Failure) {
+        catch (Standard_Failure&) {
             rebuild = true ;
             Objects.erase(Objects.begin()+i);
             SubElements.erase(SubElements.begin()+i);
@@ -7008,10 +7008,19 @@ void SketchObject::makeMissingEquality(bool onebyone)
         analyser->makeMissingEquality(onebyone);
 }
 
-void SketchObject::autoRemoveRedundants(bool updategeo)
+int SketchObject::autoRemoveRedundants(bool updategeo)
 {
-    if(analyser)
-        analyser->autoRemoveRedundants(updategeo);
+    auto redundants = getLastRedundant();
+
+    if(redundants.size() == 0)
+        return 0;
+    
+    for(size_t i=0;i<redundants.size();i++) // getLastRedundant is base 1, while delConstraints is base 0
+        redundants[i]--;
+
+    delConstraints(redundants,updategeo);
+    
+    return redundants.size();
 }
 
 // Python Sketcher feature ---------------------------------------------------------
@@ -7141,11 +7150,10 @@ bool SketchExport::update() {
         // we may have our own support.
         auto shape = Part::Feature::getTopoShape(base,ref.c_str(),true,0,0,false,false);
         if(shape.isNull()) continue;
-        shape.Tag = 0;
         if(!shape.hasSubShape(TopAbs_EDGE))
             points.push_back(shape.makECopy(TOPOP_SKETCH_EXPORT));
         else
-            shapes.push_back(shape);
+            shapes.push_back(shape.makECopy());
     }
     Part::TopoShape res;
     if(shapes.size()) {

@@ -54,12 +54,13 @@ public:
     virtual void setVisible(bool);
 
     void setCheckable(bool);
-    void setChecked (bool);
+    void setChecked (bool, bool no_signal=false);
     bool isChecked() const;
 
     void setShortcut (const QString &);
     QKeySequence shortcut() const;
     void setIcon (const QIcon &);
+    QIcon icon() const;
     void setStatusTip (const QString &);
     QString statusTip() const;
     void setText (const QString &);
@@ -102,6 +103,8 @@ public:
     void setExclusive (bool);
     bool isExclusive() const;
     void setVisible (bool);
+    bool isExternalTriggered() const;
+    bool isToggled() const;
 
     void setDropDownMenu(bool b) { _dropDown = b; }
     QAction* addAction(QAction*);
@@ -112,6 +115,7 @@ public:
 
 public Q_SLOTS:
     void onActivated ();
+    void onToggled(bool);
     void onActivated (int);
     void onActivated (QAction*);
     void onHovered   (QAction*);
@@ -119,6 +123,8 @@ public Q_SLOTS:
 protected:
     QActionGroup* _group;
     bool _dropDown;
+    bool _external;
+    bool _toggle;
 };
 
 // --------------------------------------------------------------------

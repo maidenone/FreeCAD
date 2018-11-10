@@ -48,6 +48,7 @@
 #include <App/PropertyUnits.h>
 #include <Gui/Application.h>
 #include <Gui/Control.h>
+#include <Gui/Widgets.h>
 #include <Gui/Command.h>
 #include <Gui/Document.h>
 #include <Gui/Selection.h>
@@ -204,6 +205,11 @@ PropertyItem *PropertyItem::parent() const
 void PropertyItem::appendChild(PropertyItem *item)
 {
     childItems.append(item);
+}
+
+void PropertyItem::insertChild(int index, PropertyItem *child)
+{
+    childItems.insert(index, child);
 }
 
 /*!
@@ -535,20 +541,27 @@ QVariant PropertyStringItem::value(const App::Property* prop) const
 
 void PropertyStringItem::setValue(const QVariant& value)
 {
-    if (!value.canConvert(QVariant::String))
-        return;
-    QString val = value.toString();
-    val = QString::fromUtf8(Base::Interpreter().strToPython(val.toUtf8()).c_str());
-    QString data = QString::fromLatin1("\"%1\"").arg(val);
-    setPropertyValue(data);
+    if(!hasExpression())  {
+        if (!value.canConvert(QVariant::String))
+            return;
+        QString val = value.toString();
+        val = QString::fromUtf8(Base::Interpreter().strToPython(val.toUtf8()).c_str());
+        QString data = QString::fromLatin1("\"%1\"").arg(val);
+        setPropertyValue(data);
+    }
 }
 
 QWidget* PropertyStringItem::createEditor(QWidget* parent, const QObject* receiver, const char* method) const
 {
-    QLineEdit *le = new QLineEdit(parent);
+    ExpLineEdit *le = new ExpLineEdit(parent);
     le->setFrame(false);
     le->setReadOnly(isReadOnly());
     QObject::connect(le, SIGNAL(textChanged(const QString&)), receiver, method);
+    if(isBound()) {
+        le->bind(getPath());
+        le->setAutoApply(autoApply());
+    }
+        
     return le;
 }
 
@@ -2208,7 +2221,9 @@ void PropertyStringListItem::setValue(const QVariant& value)
     for (QStringList::Iterator it = values.begin(); it != values.end(); ++it) {
         QString text(*it);
         text.replace(QString::fromUtf8("'"),QString::fromUtf8("\\'"));
-        str << "unicode('" << text << "', 'utf-8'),";
+
+        std::string pystr = Base::Tools::escapedUnicodeFromUtf8(text.toUtf8());
+        str << "u\"" << pystr.c_str() << "\", ";
     }
     str << "]";
     setPropertyValue(data);

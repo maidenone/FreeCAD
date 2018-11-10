@@ -59,8 +59,15 @@ void ActiveObjectList::setHighlight(const ObjectInfo &info, HighlightMode mode, 
     auto obj = getObject(info,false);
     if(!obj) return;
     auto vp = dynamic_cast<ViewProviderDocumentObject*>(Application::Instance->getViewProvider(obj));
-    if(vp)
-        vp->getDocument()->signalHighlightObject(*vp, mode, enable);
+    if(!vp) return;
+
+    ParameterGrp::handle hGrp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/TreeView");
+    bool autoExpand = hGrp->GetBool("TreeActiveAutoExpand", true);
+    if (autoExpand)
+        vp->getDocument()->signalExpandObject(*vp, enable?Gui::Expand:Gui::Collapse);
+
+    vp->getDocument()->signalHighlightObject(*vp, mode,enable,info.obj,info.subname.c_str());
 }
 
 Gui::ActiveObjectList::ObjectInfo Gui::ActiveObjectList::getObjectInfo(
@@ -79,18 +86,17 @@ Gui::ActiveObjectList::ObjectInfo Gui::ActiveObjectList::getObjectInfo(
         // if we can find such object in the current selection.
         auto sels = Gui::Selection().getSelection(_Doc->getDocument()->getName(),false);
         for(auto &sel : sels) {
-            const char *sub = sel.SubName;
-            const char *dot = sub;
-            for(auto sobj=sel.pObject;dot;sub=dot,dot=strchr(sub,'.')) {
-                if(dot!=sel.SubName) {
-                    sobj = sobj->getSubObject(std::string(sub,dot-sub+1).c_str());
-                    if(!sobj) break;
-                }
-                if(sobj == obj || sobj->getLinkedObject() == obj) {
+            if(sel.pObject == obj || sel.pObject->getLinkedObject(true)==obj) {
+                info.obj = sel.pObject;
+                break;
+            }
+            for(auto dot=strchr(sel.SubName,'.');dot;dot=strchr(dot+1,'.')) {
+                std::string subname(sel.SubName,dot-sel.SubName+1);
+                auto sobj = sel.pObject->getSubObject(subname.c_str());
+                if(!sobj) break;
+                if(sobj == obj || sobj->getLinkedObject(true) == obj) {
                     info.obj = sel.pObject;
-                    if(dot!=sel.SubName)
-                        info.subname = std::string(sel.SubName,dot-sel.SubName+1);
-                    if(subname) info.subname += subname;
+                    info.subname = subname;
                     break;
                 }
             }

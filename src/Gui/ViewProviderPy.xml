@@ -80,6 +80,11 @@
                     Check whether the child object can be removed from other parent and added here by drag and drop</UserDocu>
 			</Documentation>
 		</Methode>
+        <Methode Name="doubleClicked">
+            <Documentation>
+                <UserDocu>Trigger double clicking the corresponding tree item of this view object</UserDocu>
+            </Documentation>
+        </Methode>
         <Methode Name="addDisplayMode">
             <Documentation>
                 <UserDocu>Add a new display mode to the view provider</UserDocu>
@@ -221,6 +226,12 @@ getBoundingBox(subname=None, transform=True, view=None): obtain the bounding box
         <UserDocu>Tells the tree view whether to remvoe the children item from root or not</UserDocu>
       </Documentation>
       <Parameter Name="CanRemoveChildrenFromRoot" Type="Boolean" />
+    </Attribute>
+    <Attribute Name="LinkVisibility">
+      <Documentation>
+          <UserDocu>Get/set visiblities of all links to this view object</UserDocu>
+      </Documentation>
+      <Parameter Name="LinkVisibility" Type="Boolean" />
     </Attribute>
   </PythonExport>
 </GenerateModel>

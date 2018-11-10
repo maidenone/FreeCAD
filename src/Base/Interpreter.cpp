@@ -676,6 +676,47 @@ PyObject * InterpreterSingleton::getValue(const char * key, const char * result_
     return PyObject_GetAttrString(module, result_var);
 }
 
+void InterpreterSingleton::addVariable(const char * key, Py::Object value) {
+    PyObject *module, *dict;
+    PyGILStateLocker locker;
+    module = PP_Load_Module("__main__");
+    if (module == NULL)
+        throw PyException();
+    dict = PyModule_GetDict(module);
+    if (dict == NULL)
+        throw PyException();
+
+    if(PyDict_SetItemString(dict,key,value.ptr())!=0)
+        throw PyException();
+}
+
+void InterpreterSingleton::removeVariable(const char *key) {
+    PyObject *module, *dict;
+    PyGILStateLocker locker;
+    module = PP_Load_Module("__main__");
+    if (module == NULL)
+        throw PyException();
+    dict = PyModule_GetDict(module);
+    if (dict == NULL)
+        throw PyException();
+
+    PyDict_DelItemString(dict,key);
+}
+
+void InterpreterSingleton::removeVariables(const std::vector<std::string> &keys) {
+    PyObject *module, *dict;
+    PyGILStateLocker locker;
+    module = PP_Load_Module("__main__");
+    if (module == NULL)
+        throw PyException();
+    dict = PyModule_GetDict(module);
+    if (dict == NULL)
+        throw PyException();
+
+    for(auto &key : keys)
+        PyDict_DelItemString(dict,key.c_str());
+}
+
 void InterpreterSingleton::dbgObserveFile(const char* sFileName)
 {
     if (sFileName)
@@ -908,3 +949,43 @@ void InterpreterSingleton::cleanupSWIG(const char* TypeName)
     Swig_1_3_40::cleanupSWIG_T(TypeName);
 #endif
 }
+
+#if (defined(HAVE_SWIG) && (HAVE_SWIG == 1))
+namespace Swig_python { extern void dumpSWIGTypes_T(); }
+#endif
+#if PY_MAJOR_VERSION < 3
+namespace Swig_1_3_25 { extern void dumpSWIGTypes_T(); }
+namespace Swig_1_3_33 { extern void dumpSWIGTypes_T(); }
+namespace Swig_1_3_36 { extern void dumpSWIGTypes_T(); }
+namespace Swig_1_3_38 { extern void dumpSWIGTypes_T(); }
+namespace Swig_1_3_40 { extern void dumpSWIGTypes_T(); }
+#endif
+
+void InterpreterSingleton::dumpSWIG()
+{
+    PyGILStateLocker locker;
+#if (defined(HAVE_SWIG) && (HAVE_SWIG == 1))
+    Swig_python::dumpSWIGTypes_T();
+#endif
+#if PY_MAJOR_VERSION < 3
+    Swig_1_3_25::dumpSWIGTypes_T();
+    Swig_1_3_33::dumpSWIGTypes_T();
+    Swig_1_3_36::dumpSWIGTypes_T();
+    Swig_1_3_38::dumpSWIGTypes_T();
+    Swig_1_3_40::dumpSWIGTypes_T();
+#endif
+}
+
+// ------------------------------------------------------------
+
+PythonVariables::~PythonVariables() {
+    Base::Interpreter().removeVariables(names);
+}
+
+const std::string &PythonVariables::add(Py::Object obj) {
+    static size_t idx;
+    names.push_back(prefix + std::to_string(idx++));
+    Base::Interpreter().addVariable(names.back().c_str(),obj);
+    return names.back();
+}
+

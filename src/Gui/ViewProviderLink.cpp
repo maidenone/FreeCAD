@@ -271,6 +271,33 @@ public:
     friend inline void intrusive_ptr_release(LinkInfo *px) { px->release(); }
 #endif
 
+    bool isVisible() const {
+        if(!isLinked())
+            return true;
+        int indices[] = {LinkView::SnapshotTransform, LinkView::SnapshotVisible};
+        for(int idx : indices) {
+            if(!pcSwitches[idx])
+                continue;
+            if(pcSwitches[idx]->whichChild.getValue()==-1)
+                return false;
+        }
+        return true;
+    }
+
+    void setVisible(bool visible) {
+        if(!isLinked())
+            return;
+        int indices[] = {LinkView::SnapshotTransform, LinkView::SnapshotVisible};
+        for(int idx : indices) {
+            if(!pcSwitches[idx])
+                continue;
+            if(!visible)
+                pcSwitches[idx]->whichChild = -1;
+            else if(pcSwitches[idx]->getNumChildren()>pcLinked->getDefaultMode())
+                pcSwitches[idx]->whichChild = pcLinked->getDefaultMode();
+        }
+    }
+
     SoSeparator *getSnapshot(int type, bool update=false) {
         if(type<0 || type>=LinkView::SnapshotMax)
             return 0;
@@ -570,6 +597,17 @@ ViewProviderLinkObserver::ViewProviderLinkObserver() {
     // TODO: any better way to get deleted automatically?
     m_isPythonExtension = true;
     initExtensionType(ViewProviderLinkObserver::getExtensionClassTypeId());
+}
+
+bool ViewProviderLinkObserver::isLinkVisible() const {
+    if(linkInfo)
+        return linkInfo->isVisible();
+    return true;
+}
+
+void ViewProviderLinkObserver::setLinkVisible(bool visible) {
+    if(linkInfo)
+        linkInfo->setVisible(visible);
 }
 
 void ViewProviderLinkObserver::extensionBeforeDelete() {
@@ -1963,28 +2001,28 @@ bool ViewProviderLink::canDropObjectEx(App::DocumentObject *obj,
     return true;
 }
 
-void ViewProviderLink::dropObjectEx(App::DocumentObject* obj, 
-        App::DocumentObject *owner, const char *subname, const std::vector<std::string> &elements) 
+std::string ViewProviderLink::dropObjectEx(App::DocumentObject* obj, 
+    App::DocumentObject *owner, const char *subname, const std::vector<std::string> &elements) 
 {
     auto ext = getLinkExtension();
     if(isGroup(ext)) {
-        ext->setLink(ext->getElementListValue().size(),obj);
+        size_t size = ext->getElementListValue().size();
+        ext->setLink(size,obj);
         if(obj->getDocument()==getObject()->getDocument() && obj->Visibility.getValue())
             obj->Visibility.setValue(false);
-        return;
+        return std::to_string(size)+".";
     }
 
     if(!ext || !ext->getLinkedObjectProperty() || hasElements(ext))
-        return;
+        return std::string();
 
     if(!hasSubName) {
         auto linked = getLinkedView(false,ext);
-        if(linked) {
-            linked->dropObjectEx(obj,owner,subname,elements);
-            return;
-        }
+        if(linked)
+            return linked->dropObjectEx(obj,owner,subname,elements);
     }
     ext->setLink(-1,owner,subname);
+    return std::string();
 }
 
 bool ViewProviderLink::canDragAndDropObject(App::DocumentObject* obj) const {

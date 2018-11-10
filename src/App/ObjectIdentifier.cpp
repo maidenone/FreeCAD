@@ -39,20 +39,14 @@
 #include <Base/Tools.h>
 #include <Base/Interpreter.h>
 #include <Base/QuantityPy.h>
+#include <App/Link.h>
+#include <Base/Console.h>
+
+FC_LOG_LEVEL_INIT("Expression",true,true)
 
 using namespace App;
 using namespace Base;
 
-/**
- * @brief Compute a hash value for the object identifier given by \a path.
- * @param path Inputn path
- * @return Hash value
- */
-
-std::size_t App::hash_value(const App::ObjectIdentifier & path)
-{
-    return boost::hash_value(path.toString());
-}
 
 // Path class
 
@@ -111,7 +105,8 @@ std::string App::quote(const std::string &input)
  * @param property Name of property.
  */
 
-ObjectIdentifier::ObjectIdentifier(const App::PropertyContainer * _owner, const std::string & property)
+ObjectIdentifier::ObjectIdentifier(const App::PropertyContainer * _owner, 
+        const std::string & property, int index)
     : owner(_owner)
     , documentNameSet(false)
     , documentObjectNameSet(false)
@@ -121,15 +116,15 @@ ObjectIdentifier::ObjectIdentifier(const App::PropertyContainer * _owner, const 
         if (!docObj)
             throw Base::RuntimeError("Property must be owned by a document object.");
 
-        if (property.size() > 0) {
-            const Document * doc = docObj->getDocument();
-
-            documentName = String(doc->getName(), false, true);
-            documentObjectName = String(docObj->getNameInDocument(), false, true);
-        }
+        if (property.size() > 0)
+            setDocumentObjectName(docObj);
     }
-    if (property.size() > 0)
-        addComponent(Component::SimpleComponent(property));
+    if (property.size() > 0) {
+        if(index<0)
+            addComponent(Component::SimpleComponent(property));
+        else
+            addComponent(Component::ArrayComponent(property,index));
+    }
 }
 
 /**
@@ -137,7 +132,7 @@ ObjectIdentifier::ObjectIdentifier(const App::PropertyContainer * _owner, const 
  * @param prop Property to construct object identifier for.
  */
 
-ObjectIdentifier::ObjectIdentifier(const Property &prop)
+ObjectIdentifier::ObjectIdentifier(const Property &prop, int index)
     : owner(prop.getContainer())
     , documentNameSet(false)
     , documentObjectNameSet(false)
@@ -147,12 +142,12 @@ ObjectIdentifier::ObjectIdentifier(const Property &prop)
     if (!docObj)
         throw Base::TypeError("Property must be owned by a document object.");
 
-    Document * doc = docObj->getDocument();
+    setDocumentObjectName(docObj);
 
-    documentName = String(doc->getName(), false, true);
-    documentObjectName = String(docObj->getNameInDocument(), false, true);
-
-    addComponent(Component::SimpleComponent(String(owner->getPropertyName(&prop))));
+    if(index<0)
+        addComponent(Component::SimpleComponent(String(owner->getPropertyName(&prop))));
+    else
+        addComponent(Component::ArrayComponent(String(owner->getPropertyName(&prop)),index));
 }
 
 /**
@@ -201,6 +196,8 @@ bool ObjectIdentifier::operator ==(const ObjectIdentifier &other) const
         return false;
     if (result1.resolvedDocumentObjectName != result2.resolvedDocumentObjectName)
         return false;
+    if (result1.subObjectName != result2.subObjectName)
+        return false;
     if (components != other.components)
         return false;
     return true;
@@ -238,6 +235,12 @@ bool ObjectIdentifier::operator <(const ObjectIdentifier &other) const
         return true;
 
     if (result1.resolvedDocumentObjectName > result2.resolvedDocumentObjectName)
+        return false;
+
+    if (result1.subObjectName < result2.subObjectName)
+        return true;
+
+    if (result1.subObjectName > result2.subObjectName)
         return false;
 
     if (components.size() < other.components.size())
@@ -305,21 +308,44 @@ int ObjectIdentifier::numSubComponents() const
 
 std::string ObjectIdentifier::toString() const
 {
+    if(_cache.size())
+        return _cache;
+
     std::stringstream s;
     ResolveResults result(*this);
 
-    if (documentNameSet)
-        s << documentName.toString() << "#";
+    if(result.resolvedProperty && 
+       result.resolvedDocumentObject==owner && 
+       components.size()>1 && result.propertyIndex==0) 
+    {
+        s << '.';
+    }else{
+        if (documentNameSet)
+            s << documentName.toString() << "#";
 
-    if (documentObjectNameSet)
-        s << documentObjectName.toString() << ".";
-    else if (result.propertyIndex > 0)
-        s << components[0].toString() << ".";
+        if (documentObjectNameSet)
+            s << documentObjectName.toString() << ".";
+        else if (result.propertyIndex > 0)
+            s << components[0].toString() << ".";
+    }
 
-    s << getPropertyName() << getSubPathStr();
+    if(subObjectName.getString().size())
+        s << subObjectName.toString() << '.';
+
+    s << getPropertyName() << getSubPathStr(result);
+    _cache = s.str();
 
     return s.str();
 }
+
+std::size_t ObjectIdentifier::hash() const
+{
+    if(_hash && _cache.size())
+        return _hash;
+    _hash = boost::hash_value(toString());
+    return _hash;
+}
+
 
 /**
  * @brief Escape toString representation so it is suitable for being embedded in a python command.
@@ -348,6 +374,7 @@ bool ObjectIdentifier::renameDocumentObject(const std::string &oldName, const st
         else
             documentObjectName = ObjectIdentifier::String(newName, true);
 
+        _cache.clear();
         return true;
     }
     else {
@@ -359,6 +386,7 @@ bool ObjectIdentifier::renameDocumentObject(const std::string &oldName, const st
             else
                 components[0].name = ObjectIdentifier::String(newName, true);
 
+            _cache.clear();
             return true;
         }
     }
@@ -377,6 +405,7 @@ bool ObjectIdentifier::renameDocumentObject(const std::string &oldName, const st
             else
                 components[0].name = ObjectIdentifier::String(newName, true);
 
+            _cache.clear();
             return true;
         }
     }
@@ -431,6 +460,7 @@ bool ObjectIdentifier::renameDocument(const std::string &oldName, const std::str
 
     if (documentNameSet && documentName == oldName) {
         documentName = newName;
+        _cache.clear();
         return true;
     }
     else {
@@ -438,6 +468,7 @@ bool ObjectIdentifier::renameDocument(const std::string &oldName, const std::str
 
         if (result.resolvedDocumentName == oldName) {
             documentName = newName;
+            _cache.clear();
             return true;
         }
     }
@@ -472,18 +503,20 @@ bool ObjectIdentifier::validDocumentRename(const std::string &oldName, const std
  * @return String representation of path.
  */
 
-std::string ObjectIdentifier::getSubPathStr() const
+std::string ObjectIdentifier::getSubPathStr(const ResolveResults &result, PythonVariables *vars) const
 {
-    ResolveResults result(*this);
-
     std::stringstream s;
     std::vector<Component>::const_iterator i = components.begin() + result.propertyIndex + 1;
     while (i != components.end()) {
-        s << "." << i->toString();
+        s << "." << i->toString(vars);
         ++i;
     }
 
     return s.str();
+}
+
+std::string ObjectIdentifier::getSubPathStr() const {
+    return getSubPathStr(ResolveResults(*this));
 }
 
 /**
@@ -494,13 +527,15 @@ std::string ObjectIdentifier::getSubPathStr() const
  * @param _key Key index, if type is map, ir empty if simple or array.
  */
 
-ObjectIdentifier::Component::Component(const String &_component, ObjectIdentifier::Component::typeEnum _type, int _index, String _key)
+ObjectIdentifier::Component::Component(const String &_component, ObjectIdentifier::Component::typeEnum _type, int _index, String _key, const std::vector<Expression*> &args)
     : name(_component)
     , type(_type)
     , index(_index)
     , key(_key)
-    , keyIsString(false)
 {
+    arguments.reserve(args.size());
+    for(auto expr : args)
+        arguments.emplace_back(expr);
 }
 
 /**
@@ -549,6 +584,25 @@ ObjectIdentifier::Component ObjectIdentifier::Component::MapComponent(const Obje
     return Component(_component, MAP, -1, _key);
 }
 
+ObjectIdentifier::Component ObjectIdentifier::Component::CallableComponent(
+        const std::string &name, const std::vector<Expression*> &args)
+{
+    return Component(String(name), CALLABLE, -1, String(), args);
+}
+
+ObjectIdentifier::Component ObjectIdentifier::Component::CallableComponent(
+        const std::string &name, const std::vector<Expression*> &args, int index)
+{
+    return Component(String(name), CALLABLE_ARRAY, index, String(), args);
+}
+
+ObjectIdentifier::Component ObjectIdentifier::Component::CallableComponent(
+        const std::string &name, const std::vector<Expression*> &args, const String &key)
+{
+    return Component(String(name), CALLABLE_MAP, -1, key, args);
+}
+
+
 /**
  * @brief Comparison operator for Component objects.
  * @param other The object we want to compare to.
@@ -563,12 +617,23 @@ bool ObjectIdentifier::Component::operator ==(const ObjectIdentifier::Component 
     if (name != other.name)
         return false;
 
+    if(arguments.size() != other.arguments.size())
+        return false;
+
+    for(size_t i=0;i<arguments.size();++i) {
+        if(arguments[i]->toString()!=other.arguments[i]->toString())
+            return false;
+    }
+
     switch (type) {
+    case CALLABLE:
     case SIMPLE:
         return true;
     case ARRAY:
+    case CALLABLE_ARRAY:
         return index == other.index;
     case MAP:
+    case CALLABLE_MAP:
         return key == other.key;
     default:
         assert(0);
@@ -576,22 +641,75 @@ bool ObjectIdentifier::Component::operator ==(const ObjectIdentifier::Component 
     }
 }
 
+static Py::Object pyObjectFromAny(boost::any value) {
+    if (value.type() == typeid(Py::Object))
+        return boost::any_cast<Py::Object>(value);
+    else if (value.type() == typeid(Quantity))
+        return Py::Float(boost::any_cast<Quantity>(value).getValue());
+    else if (value.type() == typeid(double))
+        return Py::Float(boost::any_cast<double>(value));
+    else if (value.type() == typeid(float))
+        return Py::Float(boost::any_cast<float>(value));
+    else if (value.type() == typeid(int)) 
+        return Py::Int(boost::any_cast<int>(value));
+    else if (value.type() == typeid(long))
+        return Py::Long(boost::any_cast<int>(value));
+    else if (value.type() == typeid(bool))
+        return Py::Boolean(boost::any_cast<bool>(value));
+    else if (value.type() == typeid(std::string))
+        return Py::String(boost::any_cast<string>(value));
+    else if (value.type() == typeid(char*))
+        return Py::String(boost::any_cast<char*>(value));
+    else if (value.type() == typeid(const char*))
+        return Py::String(boost::any_cast<const char*>(value));
+    else
+        throw Base::TypeError("Unknown type");
+}
+
+#define NO_CALLABLE ((PythonVariables*)-1)
+
 /**
  * @brief Create a string representation of a component.
  * @return A string representing the component.
  */
 
-std::string ObjectIdentifier::Component::toString() const
+std::string ObjectIdentifier::Component::toString(PythonVariables *vars) const
 {
     std::stringstream s;
-
     s << name.toString();
+
+    if(isCallable()) {
+        if(vars == NO_CALLABLE)
+            throw Base::RuntimeError("Callable identifier is not allowed here");
+        s << '(';
+        if(arguments.size()) {
+            bool first = true;
+            for(auto expr : arguments) {
+                if(!first)
+                    s << ',';
+                else
+                    first = false;
+                if(vars) 
+                    s << vars->add(pyObjectFromAny(expr->getValueAsAny()));
+                else
+                    s << expr->toString();
+            }
+        }
+        s << ')';
+    }
+
     switch (type) {
+    case Component::CALLABLE:
     case Component::SIMPLE:
         break;
+    case Component::CALLABLE_MAP:
     case Component::MAP:
-        s << "[" << key.toString() << "]";
+        if(vars)
+            s << "['" << key.getString() << "']";
+        else
+            s << "[" << key.toString() << "]";
         break;
+    case Component::CALLABLE_ARRAY:
     case Component::ARRAY:
         s << "[" << index << "]";
         break;
@@ -631,8 +749,10 @@ App::DocumentObject * ObjectIdentifier::getDocumentObject(const App::Document * 
     for (std::vector<DocumentObject*>::iterator j = docObjects.begin(); j != docObjects.end(); ++j) {
         if (strcmp((*j)->Label.getValue(), static_cast<const char*>(name)) == 0) {
             // Found object with matching label
-            if (objectByLabel != 0)
+            if (objectByLabel != 0)  {
+                FC_WARN("duplicate object label " << doc->getName() << '#' << name);
                 return 0;
+            }
             objectByLabel = *j;
         }
     }
@@ -677,6 +797,7 @@ void ObjectIdentifier::resolve(ResolveResults &results) const
         results.resolvedDocumentName = String(results.resolvedDocument->getName(), false, true);
     }
 
+    results.subObjectName = subObjectName;
     results.propertyName = "";
     results.propertyIndex = 0;
 
@@ -703,7 +824,7 @@ void ObjectIdentifier::resolve(ResolveResults &results) const
         if (components.size() > 0) {
             results.propertyName = components[0].name.getString();
             results.propertyIndex = 0;
-            results.resolvedProperty = results.resolvedDocumentObject->getPropertyByName(results.propertyName.c_str());
+            results.getProperty(*this);
         }
         else
             return;
@@ -718,10 +839,11 @@ void ObjectIdentifier::resolve(ResolveResults &results) const
 
             results.resolvedDocumentObjectName = String(static_cast<const DocumentObject*>(owner)->getNameInDocument(), false, true);
             results.resolvedDocumentObject = getDocumentObject(results.resolvedDocument, results.resolvedDocumentObjectName, byIdentifier);
+            if(!results.resolvedDocumentObject)
+                return;
             results.propertyName = components[0].name.getString();
-            if (results.resolvedDocumentObject)
-                results.resolvedProperty = results.resolvedDocumentObject->getPropertyByName(results.propertyName.c_str());
             results.propertyIndex = 0;
+            results.getProperty(*this);
         }
         else if (components.size() >= 2) {
             /* No --  */
@@ -737,8 +859,25 @@ void ObjectIdentifier::resolve(ResolveResults &results) const
                 /* Yes */
                 results.resolvedDocumentObjectName = String(components[0].name, false, byIdentifier);
                 results.propertyName = components[1].name.getString();
-                results.resolvedProperty = results.resolvedDocumentObject->getPropertyByName(results.propertyName.c_str());
                 results.propertyIndex = 1;
+                results.getProperty(*this);
+                if(!results.resolvedProperty) {
+                    // If the second component is not a property name, try to
+                    // interpret the first component as the property name.
+                    auto docObj = static_cast<const DocumentObject*>(owner);
+                    DocumentObject *sobj = 0;
+                    results.resolvedProperty = resolveProperty(
+                            docObj,components[0].name,sobj,results.propertyType);
+                    if(results.resolvedProperty) {
+                        results.propertyName = components[0].name.getString();
+                        results.resolvedDocument = docObj->getDocument();
+                        results.resolvedDocumentName = String(results.resolvedDocument->getName(), false, true);
+                        results.resolvedDocumentObjectName = String(docObj->getNameInDocument(), false, true);
+                        results.resolvedDocumentObject = const_cast<DocumentObject*>(docObj);
+                        results.resolvedSubObject = sobj;
+                        results.propertyIndex = 0;
+                    }
+                }
             }
             else {
 
@@ -759,8 +898,7 @@ void ObjectIdentifier::resolve(ResolveResults &results) const
                     results.propertyIndex = 0;
                 }
                 results.propertyName = components[results.propertyIndex].name.getString();
-                if (results.resolvedDocumentObject)
-                    results.resolvedProperty = results.resolvedDocumentObject->getPropertyByName(results.propertyName.c_str());
+                results.getProperty(*this);
             }
         }
         else
@@ -837,11 +975,16 @@ std::vector<std::string> ObjectIdentifier::getStringList() const
     std::vector<std::string> l;
     ResolveResults result(*this);
 
-    if (documentNameSet)
-        l.push_back(result.resolvedDocumentName.toString());
-    if (documentObjectNameSet)
-        l.push_back(result.resolvedDocumentObjectName.toString());
+    if(!result.resolvedProperty || result.resolvedDocumentObject != owner) {
+        if (documentNameSet)
+            l.push_back(result.resolvedDocumentName.toString());
 
+        if (documentObjectNameSet)
+            l.push_back(result.resolvedDocumentObjectName.toString());
+    }
+    if(subObjectName.getString().size()) {
+        l.back() += subObjectName.toString();
+    }
     std::vector<Component>::const_iterator i = components.begin();
     while (i != components.end()) {
         l.push_back(i->toString());
@@ -919,12 +1062,63 @@ ObjectIdentifier &ObjectIdentifier::operator <<(const ObjectIdentifier::Componen
  * @return Point to property if it is uniquely defined, or 0 otherwise.
  */
 
-Property *ObjectIdentifier::getProperty() const
+Property *ObjectIdentifier::getProperty(PseudoPropertyType *ptype) const
 {
     ResolveResults result(*this);
-
+    if(ptype)
+        *ptype = result.propertyType;
     return result.resolvedProperty;
 }
+
+Property *ObjectIdentifier::resolveProperty(const App::DocumentObject *obj, 
+        const char *propertyName, App::DocumentObject *&sobj, PseudoPropertyType &ptype) const 
+{
+    if(obj && subObjectName.getString().size()) {
+        sobj = obj->getSubObject(subObjectName);
+        obj = sobj;
+    }
+    if(!obj)
+        return 0;
+
+    static std::map<std::string,PseudoPropertyType> _props = {
+        {"Shape_",PseudoShape}, 
+        {"Placement_",PseudoPlacement},
+        {"Matrix_",PseudoMatrix},
+        {"Placement__",PseudoLinkPlacement},
+        {"Matrix__",PseudoLinkMatrix},
+        {"Self_",PseudoSelf},
+    };
+    auto it = _props.find(propertyName);
+    if(it == _props.end())
+        ptype = PseudoNone;
+    else {
+        ptype = it->second;
+        return &const_cast<App::DocumentObject*>(obj)->Label; //fake the property
+    }
+    
+    auto prop = obj->getPropertyByName(propertyName);
+    if(prop && !prop->testStatus(Property::Hidden) && !(prop->getType() & PropertyType::Prop_Hidden))
+        return prop;
+
+    auto linked = obj->getLinkedObject(true);
+    if(!linked || linked==obj) {
+#if 0
+        auto ext = obj->getExtensionByType<App::LinkBaseExtension>(true);
+        if(!ext)
+            return prop;
+        linked = ext->getTrueLinkedObject(true);
+        if(!linked || linked==obj)
+            return prop;
+#else
+        return prop;
+#endif
+    }
+
+    auto linkedProp = linked->getPropertyByName(propertyName);
+    return linkedProp?linkedProp:prop;
+}
+
+        
 
 /**
  * @brief Create a canonical representation of an object identifier.
@@ -941,6 +1135,8 @@ ObjectIdentifier ObjectIdentifier::canonicalPath() const
     ObjectIdentifier simplified(getDocumentObject());
 
     ResolveResults result(*this);
+    simplified.documentName = documentName;
+    simplified.documentObjectName = documentObjectName;
 
     for (std::size_t i = result.propertyIndex; i < components.size(); ++i)
         simplified << components[i];
@@ -965,6 +1161,7 @@ void ObjectIdentifier::setDocumentName(const ObjectIdentifier::String &name, boo
 {
     documentName = name;
     documentNameSet = force;
+    _cache.clear();
 }
 
 /**
@@ -990,11 +1187,32 @@ const ObjectIdentifier::String ObjectIdentifier::getDocumentName() const
  * @param force Force name to be set.
  */
 
-void ObjectIdentifier::setDocumentObjectName(const ObjectIdentifier::String &name, bool force)
+void ObjectIdentifier::setDocumentObjectName(const ObjectIdentifier::String &name, bool force, 
+        const ObjectIdentifier::String &subname)
 {
     documentObjectName = name;
     documentObjectNameSet = force;
+    subObjectName = subname;
+    if(subObjectName.str.size() && subObjectName.str.back()!='.')
+        subObjectName.str += '.';
+    _cache.clear();
 }
+
+void ObjectIdentifier::setDocumentObjectName(const App::DocumentObject *obj, bool force,
+        const ObjectIdentifier::String &subname)
+{
+    if(!obj || !obj->getNameInDocument() || !obj->getDocument())
+        throw Base::RuntimeError("invalid object");
+    documentNameSet = force;
+    documentName = String(obj->getDocument()->getName(),false,true);
+    documentObjectNameSet = force;
+    documentObjectName = String(obj->getNameInDocument(),false,true);
+    subObjectName = subname;
+    if(subObjectName.str.size() && subObjectName.str.back()!='.')
+        subObjectName.str += '.';
+    _cache.clear();
+}
+
 
 /**
  * @brief Get the document object name
@@ -1027,43 +1245,97 @@ std::string ObjectIdentifier::String::toString() const
  * @return Python code as a string
  */
 
-std::string ObjectIdentifier::getPythonAccessor() const
+std::string ObjectIdentifier::getPythonAccessor(const ResolveResults &result, PythonVariables *vars) const
 {
-    std::stringstream s;
-    DocumentObject * docObj = getDocumentObject();
+    std::stringstream ss;
+    if(!result.resolvedDocumentObject || !result.resolvedProperty ||
+       (subObjectName.getString().size() && !result.resolvedSubObject))
+    {
+        throw RuntimeError(result.resolveErrorString());
+    }
 
-    s << "App.getDocument('" << getDocumentName() << "')."
-      << "getObject('" << docObj->getNameInDocument() << "')."
-      << getPropertyName() << getSubPathStr();
+    ss << "App.getDocument('" << result.resolvedDocument->getName()
+      << "').getObject('"  << result.resolvedDocumentObject->getNameInDocument() << "')";
 
-    return s.str();
+    auto ptype = result.propertyType;
+
+    if(result.resolvedSubObject || (ptype!=PseudoSelf && ptype!=PseudoNone)) {
+        ss << ".getSubObject('" << result.subObjectName.getString();
+        switch(ptype) {
+        case PseudoShape:
+            ptype = PseudoSelf;
+            ss << "')";
+            break;
+        case PseudoPlacement:
+            ptype = PseudoSelf;
+            ss << "',retType=3)";
+            break;
+        case PseudoMatrix:
+            ptype = PseudoSelf;
+            ss << "',retType=4)";
+            break;
+        case PseudoLinkPlacement:
+            ptype = PseudoSelf;
+            ss << "',retType=5)";
+            break;
+        case PseudoLinkMatrix:
+            ptype = PseudoSelf;
+            ss << "',retType=6)";
+            break;
+        default:
+            ss << "',retType=1)";
+        }
+    }
+    if(ptype != PseudoSelf) {
+        auto container = result.resolvedProperty->getContainer();
+        if(container!=result.resolvedDocumentObject && container!=result.resolvedSubObject)
+            ss << ".getLinkedObject(True)";
+        ss << '.' << result.propertyName;
+    }
+    ss << getSubPathStr(result,vars);
+    return ss.str();
 }
 
 /**
  * @brief Get the value of the property or field pointed to by this object identifier.
  *
- * Only a limited number of types are supported: Int, Float, String, Unicode String, and Quantities.
+ * All type of objects are supported. Some types are casted to FC native
+ * type, including: Int, Float, String, Unicode String, and Quantities. Others
+ * are just kept as Python object wrapped by boost::any.
+ *
+ * @param checkCallable: if true, calls the property's getPathValue() (which is
+ * necessary for Qunatities to work) if and only if there is no Python callable
+ * component inside. Otherwise, just use python accessor to evaluate result.
  *
  * @return The value of the property or field.
  */
 
-boost::any ObjectIdentifier::getValue() const
+boost::any ObjectIdentifier::getValue(bool checkCallable) const
 {
-    std::string s = "_path_value_temp_ = " + getPythonAccessor();
+    ResolveResults rs(*this);
+
+    if(rs.resolvedProperty && rs.propertyType==PseudoNone && checkCallable) {
+        for(auto &component : components) {
+            if(component.isCallable()) {
+                checkCallable = false;
+                break;
+            }
+        }
+        if(checkCallable)
+            return rs.resolvedProperty->getPathValue(*this);
+    }
+
+    PythonVariables vars;
+    std::string s = "_path_value_temp_ = " + getPythonAccessor(rs,&vars);
     PyObject * pyvalue = Base::Interpreter().getValue(s.c_str(), "_path_value_temp_");
-
-    class destructor {
-    public:
-        destructor(PyObject * _p) : p(_p) { }
-        ~destructor() { Py_DECREF(p); }
-    private:
-        PyObject * p;
-    };
-
-    destructor d1(pyvalue);
 
     if (!pyvalue)
         throw Base::RuntimeError("Failed to get property value.");
+
+    Py::Object value(pyvalue,true);
+    if(value.isNone())
+        throw Base::RuntimeError("Property returns None.");
+
 #if PY_MAJOR_VERSION < 3
     if (PyInt_Check(pyvalue))
         return boost::any(PyInt_AsLong(pyvalue));
@@ -1079,7 +1351,9 @@ boost::any ObjectIdentifier::getValue() const
 #endif
     else if (PyUnicode_Check(pyvalue)) {
         PyObject * s = PyUnicode_AsUTF8String(pyvalue);
-        destructor d2(s);
+        if(!s) 
+            throw Base::ValueError("Invalid unicode string");
+        Py::Object o(s,true);
 
 #if PY_MAJOR_VERSION >= 3
         return boost::any(PyUnicode_AsUTF8(s));
@@ -1094,7 +1368,8 @@ boost::any ObjectIdentifier::getValue() const
         return boost::any(*q);
     }
     else {
-        throw Base::TypeError("Invalid property type.");
+        return boost::any(value);
+        // throw Base::TypeError("Invalid property type.");
     }
 }
 
@@ -1111,10 +1386,13 @@ boost::any ObjectIdentifier::getValue() const
 void ObjectIdentifier::setValue(const boost::any &value) const
 {
     std::stringstream ss;
+    ResolveResults rs(*this);
+    PythonVariables vars;
+    ss << getPythonAccessor(rs,NO_CALLABLE) + " = ";
 
-    ss << getPythonAccessor() + " = ";
-
-    if (value.type() == typeid(Base::Quantity))
+    if (value.type() == typeid(Py::Object)) {
+        ss <<  vars.add(boost::any_cast<Py::Object>(value));
+    }else if (value.type() == typeid(Base::Quantity))
         ss << std::setprecision(std::numeric_limits<double>::digits10 + 1) << boost::any_cast<Base::Quantity>(value).getValue();
     else if (value.type() == typeid(double))
         ss << std::setprecision(std::numeric_limits<double>::digits10 + 1) << boost::any_cast<double>(value);
@@ -1142,6 +1420,31 @@ void ObjectIdentifier::setValue(const boost::any &value) const
     Base::Interpreter().runString(ss.str().c_str());
 }
 
+void ObjectIdentifier::getDeps(std::set<ObjectIdentifier> &props) const {
+    ObjectIdentifier id(owner);
+    id.documentName = documentName;
+    id.documentNameSet = documentNameSet;
+    id.documentObjectName = documentObjectName;
+    id.documentObjectNameSet = documentObjectNameSet;
+    id.subObjectName = subObjectName;
+    bool inserted = false;
+    for(auto &component : components) {
+        if(!component.isCallable()) {
+            if(!inserted)
+                id.components.push_back(component);
+            continue;
+        }
+        if(!inserted) {
+            inserted = true;
+            props.insert(id);
+        }
+        for(auto expr : component.arguments)
+            expr->getDeps(props);
+    }
+    if(!inserted)
+        props.insert(id);
+}
+
 /** Construct and initialize a ResolveResults object, given an ObjectIdentifier instance.
  *
  * The constructor will invoke the ObjectIdentifier's resolve() method to initialize the object's data.
@@ -1153,8 +1456,10 @@ ObjectIdentifier::ResolveResults::ResolveResults(const ObjectIdentifier &oi)
     , resolvedDocumentName()
     , resolvedDocumentObject(0)
     , resolvedDocumentObjectName()
+    , resolvedSubObject(0)
     , resolvedProperty(0)
     , propertyName()
+    , propertyType(PseudoNone)
 {
     oi.resolve(*this);
 }
@@ -1165,6 +1470,9 @@ std::string ObjectIdentifier::ResolveResults::resolveErrorString() const
         return std::string("Document not found: ") + resolvedDocumentName.toString();
     else if (resolvedDocumentObject == 0)
         return std::string("Document object not found: ") + resolvedDocumentObjectName.toString();
+    else if (subObjectName.getString().size() && resolvedSubObject == 0)
+        return std::string("Sub-object not found: ") + resolvedDocumentObjectName.getString()
+            + '.' + subObjectName.toString();
     else if (resolvedProperty == 0)
         return std::string("Property not found: ") + propertyName;
 
@@ -1172,3 +1480,9 @@ std::string ObjectIdentifier::ResolveResults::resolveErrorString() const
 
     return "";
 }
+
+void ObjectIdentifier::ResolveResults::getProperty(const ObjectIdentifier &oi) {
+    resolvedProperty = oi.resolveProperty(
+            resolvedDocumentObject,propertyName.c_str(),resolvedSubObject,propertyType);
+}
+

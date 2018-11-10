@@ -27,6 +27,7 @@
 #include <QTreeWidget>
 #include <QTime>
 
+#include <Base/Parameter.h>
 #include <App/Document.h>
 #include <App/Application.h>
 
@@ -44,12 +45,13 @@ typedef std::shared_ptr<DocumentObjectData> DocumentObjectDataPtr;
 class DocumentItem;
 
 /// highlight modes for the tree items
-enum HighlightMode {    Underlined,
-                        Italic    ,
-                        Overlined ,
-                        Bold      ,
-                        Blue      ,
-                        LightBlue
+enum HighlightMode {  Underlined,
+                      Italic,
+                      Overlined,
+                      Bold,
+                      Blue,
+                      LightBlue,
+                      UserDefined
 };
 
 /// highlight modes for the tree items
@@ -88,13 +90,15 @@ public:
     static const int ObjectType;
 
     void markItem(const App::DocumentObject* Obj,bool mark);
-    void syncView();
+    void syncView(ViewProviderDocumentObject *vp);
 
     const char *getTreeName() const;
 
     static void updateStatus(bool delay=false);
 
     DocumentItem *getDocumentItem(const Gui::Document *) const;
+
+    void startDragging();
 
 protected:
     /// Observer message from the Selection
@@ -131,13 +135,11 @@ protected Q_SLOTS:
     void onStartEditing();
     void onFinishEditing();
     void onSkipRecompute(bool on);
+    void onAllowPartialRecompute(bool on);
     void onReloadDoc();
     void onMarkRecompute();
     void onRecomputeObject();
-    void onSyncSelection();
-    void onPreSelection();
     void onPreSelectTimer();
-    void onSyncView();
     void onShowHidden();
     void onHideInTree();
 
@@ -157,6 +159,8 @@ private:
     void slotShowHidden(const Gui::Document &);
     void slotChangedViewObject(const Gui::ViewProvider &, const App::Property &);
     void slotFinishRestoreDocument(const App::Document&);
+    void slotDeleteObject(const Gui::ViewProviderDocumentObject&, DocumentItem *deletingDoc);
+    void slotChangeObject(const Gui::ViewProviderDocumentObject&, const App::Property &prop, bool force);
 
     void changeEvent(QEvent *e);
     void setupText();
@@ -166,11 +170,9 @@ private:
     QAction* relabelObjectAction;
     QAction* finishEditingAction;
     QAction* skipRecomputeAction;
+    QAction* allowPartialRecomputeAction;
     QAction* markRecomputeAction;
     QAction* recomputeObjectAction;
-    QAction* preSelectionAction;
-    QAction* syncSelectionAction;
-    QAction* syncViewAction;
     QAction* showHiddenAction;
     QAction* hideInTreeAction;
     QAction* reloadDocAction;
@@ -184,6 +186,7 @@ private:
     static std::unique_ptr<QPixmap> documentPixmap;
     static std::unique_ptr<QPixmap> documentPartialPixmap;
     std::map<const Gui::Document*,DocumentItem*> DocumentMap;
+    std::map<App::DocumentObject*,std::set<DocumentObjectDataPtr> > ObjectTable;
     bool fromOutside;
     int statusUpdateDelay;
 
@@ -214,12 +217,11 @@ public:
     void populateItem(DocumentObjectItem *item, bool refresh = false);
     bool populateObject(App::DocumentObject *obj);
     void selectAllInstances(const ViewProviderDocumentObject &vpd);
-    bool showItem(DocumentObjectItem *item, bool select);
+    bool showItem(DocumentObjectItem *item, bool select, bool force=false);
     void updateItemsVisibility(QTreeWidgetItem *item, bool show);
     void setItemVisibility(const Gui::ViewProviderDocumentObject&);
     void updateLinks(const ViewProviderDocumentObject &view);
     ViewProviderDocumentObject *getViewProvider(App::DocumentObject *);
-    void onDeleteDocument(DocumentItem *docItem);
     void checkRemoveChildrenFromRoot(const ViewProviderDocumentObject& view);
 
     bool showHidden() const;
@@ -236,13 +238,10 @@ protected:
     /** Removes a view provider from the document item.
      * If this view provider is not added nothing happens.
      */
-    void slotDeleteObject    (const Gui::ViewProviderDocumentObject&, bool boradcast);
-    void slotChangeObject    (const Gui::ViewProviderDocumentObject&, const App::Property &prop);
-    void slotRenameObject    (const Gui::ViewProviderDocumentObject&);
-    void slotActiveObject    (const Gui::ViewProviderDocumentObject&);
     void slotInEdit          (const Gui::ViewProviderDocumentObject&);
     void slotResetEdit       (const Gui::ViewProviderDocumentObject&);
-    void slotHighlightObject (const Gui::ViewProviderDocumentObject&,const Gui::HighlightMode&,bool);
+    void slotHighlightObject (const Gui::ViewProviderDocumentObject&,const Gui::HighlightMode&,bool,
+                              const App::DocumentObject *parent, const char *subname);
     void slotExpandObject    (const Gui::ViewProviderDocumentObject&,const Gui::TreeItemMode&);
     void slotScrollToObject  (const Gui::ViewProviderDocumentObject&);
     void slotRecomputed      (const App::Document &doc, const std::vector<App::DocumentObject*> &objs);
@@ -256,21 +255,20 @@ protected:
 
     void findSelection(bool sync, DocumentObjectItem *item, const char *subname);
 
-    typedef std::map<const ViewProvider *, std::vector<ViewProviderDocumentObject*> > ParentMap;
-    void populateParents(const ViewProvider *vp, ParentMap &);
+    typedef std::map<const ViewProvider *, std::vector<ViewProviderDocumentObject*> > ViewParentMap;
+    void populateParents(const ViewProvider *vp, ViewParentMap &);
 
 private:
     const char *treeName; // for debugging purpose
     const Gui::Document* pDocument;
     std::map<App::DocumentObject*,DocumentObjectDataPtr> ObjectMap;
+    std::map<App::DocumentObject*, std::set<App::DocumentObject*> > _ParentMap;
     std::vector<long> TransactingObjects;
 
     typedef boost::BOOST_SIGNALS_NAMESPACE::connection Connection;
     Connection connectNewObject;
     Connection connectDelObject;
     Connection connectChgObject;
-    Connection connectRenObject;
-    Connection connectActObject;
     Connection connectEdtObject;
     Connection connectResObject;
     Connection connectHltObject;
@@ -281,6 +279,8 @@ private:
     Connection connectRedo;
 
     friend class TreeWidget;
+    friend class DocumentObjectData;
+    friend class DocumentObjectItem;
 };
 
 /** The link between the tree and a document object.
@@ -317,14 +317,19 @@ public:
 
     // return the immediate decendent of the common ancestor of this item and
     // 'cousin'.
-    App::DocumentObject *getRelativeParent(std::ostringstream &str,
-            DocumentObjectItem *cousin) const;
+    App::DocumentObject *getRelativeParent(
+            std::ostringstream &str,
+            DocumentObjectItem *cousin, 
+            App::DocumentObject **topParent=0,
+            std::string *topSubname=0) const;
 
     // return the top most linked group owner's name, and subname.  This method
     // is necssary despite have getFullSubName above is because native geo group
     // cannot handle selection with sub name. So only a linked group can have
     // subname in selection
     int getSubName(std::ostringstream &str, App::DocumentObject *&topParent) const;
+
+    void setHighlight(bool set, Gui::HighlightMode mode = Gui::LightBlue);
 
     const char *getName() const;
     const char *getTreeName() const;
@@ -366,7 +371,45 @@ private:
     QTreeWidget* treeWidget;
 };
 
-}
+/// Helper class to read/write tree view options
+class GuiExport TreeParams : public ParameterGrp::ObserverType {
+public:
+    TreeParams();
+    void OnChange(Base::Subject<const char*> &, const char* sReason);
+    static TreeParams *Instance();
 
+#define FC_TREEPARAM_DEFS \
+    FC_TREEPARAM_DEF(SyncSelection,bool,Bool,true) \
+    FC_TREEPARAM_DEF(SyncView,bool,Bool,false) \
+    FC_TREEPARAM_DEF(PreSelection,bool,Bool,true) \
+    FC_TREEPARAM_DEF(SyncPlacement,bool,Bool,false) \
+    FC_TREEPARAM_DEF(RecordSelection,bool,Bool,true) \
+    FC_TREEPARAM_DEF(DocumentMode,int,Int,1)
+
+#define FC_TREEPARAM_FUNCS(_name,_type,_Type,_default) \
+    _type _name() const {return _##_name;} \
+    void set##_name(_type);\
+    void on##_name##Changed();
+
+#undef FC_TREEPARAM_DEF
+#define FC_TREEPARAM_DEF FC_TREEPARAM_FUNCS
+    FC_TREEPARAM_DEFS
+
+private:
+
+#define FC_TREEPARAM_DECLARE(_name,_type,_Type,_default) \
+    _type _##_name;
+
+#undef FC_TREEPARAM_DEF
+#define FC_TREEPARAM_DEF FC_TREEPARAM_DECLARE
+    FC_TREEPARAM_DEFS
+
+    ParameterGrp::handle handle;
+};
+
+#define FC_TREEPARAM(_name) (Gui::TreeParams::Instance()->_name())
+#define FC_TREEPARAM_SET(_name,_v) Gui::TreeParams::Instance()->set##_name(_v)
+
+}
 
 #endif // GUI_TREE_H

@@ -76,7 +76,8 @@ class MDIView;
 enum ViewStatus {
     UpdateData = 0,
     Detach = 1,
-    isRestoring = 2
+    isRestoring = 2,
+    UpdatingView = 3,
 };
 
 
@@ -254,12 +255,43 @@ public:
      * (actually in ViewProviderDocumentObject) inhibites cross document
      * dropping, and calls canDropObject(obj) for the rest. Override this
      * function to enable cross document linking.
+     *
+     * @param obj: the object being dropped
+     *
+     * @param owner: the (grand)parent object of the dropping object. Maybe
+     * null. This may not be the top parent object, as tree view will try to
+     * find a parent of the dropping object realtive to this object to avoid
+     * cyclic dependency
+     *
+     * @param subname: subname reference to the dropping object
+     *
+     * @param elements: non-object sub-elements, e.g. Faces, Edges, selected
+     * when the object is being dropped
+     *
+     * @return Return whether the dropping action is allowed.
      * */
     virtual bool canDropObjectEx(App::DocumentObject *obj, App::DocumentObject *owner, 
             const char *subname, const std::vector<std::string> &elements) const;
 
-    /** Add an object with full quanlified name to the view provider by drag and drop */
-    virtual void dropObjectEx(App::DocumentObject *obj, App::DocumentObject *owner, 
+    /** Add an object with full quanlified name to the view provider by drag and drop
+     *
+     * @param obj: the object being dropped
+     *
+     * @param owner: the (grand)parent object of the dropping object. Maybe
+     * null. This may not be the top parent object, as tree view will try to
+     * find a parent of the dropping object realtive to this object to avoid
+     * cyclic dependency
+     *
+     * @param subname: subname reference to the dropping object
+     *
+     * @param elements: non-object sub-elements, e.g. Faces, Edges, selected
+     * when the object is being dropped
+     *
+     * @return Optionally returns a subname reference locating the dropped
+     * object, which may or may not be the actual dropped object, e.g. it may be
+     * a link.
+     */
+    virtual std::string dropObjectEx(App::DocumentObject *obj, App::DocumentObject *owner, 
             const char *subname, const std::vector<std::string> &elements);
     //@}
 
@@ -315,6 +347,8 @@ public:
     virtual bool isShow(void) const;
     void setVisible(bool);
     bool isVisible() const;
+    void setLinkVisible(bool);
+    bool isLinkVisible() const;
     /// Overrides the display mode with mode.
     virtual void setOverrideMode(const std::string &mode);
     const std::string getOverrideMode();
@@ -396,6 +430,8 @@ public:
     static SbMatrix convert(const Base::Matrix4D &rcMatrix);
     static Base::Matrix4D convert(const SbMatrix &sbMat);
     //@}
+
+    virtual MDIView *getMDIView() {return 0;}
 
 public:
     // this method is called by the viewer when the ViewProvider is in edit

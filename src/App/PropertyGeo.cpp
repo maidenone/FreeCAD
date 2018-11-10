@@ -40,6 +40,8 @@
 #include <Base/MatrixPy.h>
 #include <Base/PlacementPy.h>
 
+#include "Document.h"
+#include "DocumentObject.h"
 #include "Placement.h"
 #include "PropertyGeo.h"
 #include "ObjectIdentifier.h"
@@ -193,11 +195,11 @@ void PropertyVector::Paste(const Property &from)
 
 void PropertyVector::getPaths(std::vector<ObjectIdentifier> &paths) const
 {
-    paths.push_back(ObjectIdentifier(getContainer()) << ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(ObjectIdentifier(*this)
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("x")));
-    paths.push_back(ObjectIdentifier(getContainer()) << ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(ObjectIdentifier(*this)
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("y")));
-    paths.push_back(ObjectIdentifier(getContainer()) << ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(ObjectIdentifier(*this)
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("z")));
 }
 
@@ -353,7 +355,7 @@ void PropertyVectorList::Restore(Base::XMLReader &reader)
     std::string file (reader.getAttribute("file") );
 
     if (!file.empty()) {
-        // initate a file read
+        // initiate a file read
         reader.addFile(file.c_str(),this);
     }
 }
@@ -589,27 +591,27 @@ const Base::Placement & PropertyPlacement::getValue(void)const
 
 void PropertyPlacement::getPaths(std::vector<ObjectIdentifier> &paths) const
 {
-    paths.push_back(ObjectIdentifier(getContainer()) << ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(ObjectIdentifier(*this)
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("Base"))
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("x")));
-    paths.push_back(ObjectIdentifier(getContainer()) << ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(ObjectIdentifier(*this)
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("Base"))
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("y")));
-    paths.push_back(ObjectIdentifier(getContainer()) << ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(ObjectIdentifier(*this)
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("Base"))
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("z")));
-    paths.push_back(ObjectIdentifier(getContainer()) << ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(ObjectIdentifier(*this)
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("Rotation"))
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("Angle")));
-    paths.push_back(ObjectIdentifier(getContainer()) << ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(ObjectIdentifier(*this)
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("Rotation"))
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("Axis"))
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("x")));
-    paths.push_back(ObjectIdentifier(getContainer()) << ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(ObjectIdentifier(*this)
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("Rotation"))
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("Axis"))
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("y")));
-    paths.push_back(ObjectIdentifier(getContainer()) << ObjectIdentifier::Component::SimpleComponent(getName())
+    paths.push_back(ObjectIdentifier(*this)
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("Rotation"))
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("Axis"))
                     << ObjectIdentifier::Component::SimpleComponent(ObjectIdentifier::String("z")));
@@ -798,7 +800,7 @@ void PropertyPlacementList::Restore(Base::XMLReader &reader)
     std::string file (reader.getAttribute("file") );
 
     if (!file.empty()) {
-        // initate a file read
+        // initiate a file read
         reader.addFile(file.c_str(),this);
     }
 }
@@ -951,4 +953,18 @@ PropertyComplexGeoData::PropertyComplexGeoData()
 PropertyComplexGeoData::~PropertyComplexGeoData()
 {
 
+}
+
+std::string PropertyComplexGeoData::getElementMapVersion(bool) const {
+    auto data = getComplexData();
+    if(!data)
+        return std::string();
+    auto owner = dynamic_cast<DocumentObject*>(getContainer());
+    std::ostringstream ss;
+    if(owner && owner->getDocument() && owner->getDocument()->Hasher==data->Hasher)
+        ss << "1.";
+    else
+        ss << "0.";
+    ss << data->getElementMapVersion();
+    return ss.str();
 }

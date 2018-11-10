@@ -157,14 +157,14 @@ public:
 
 
 
-// Export an instance of the base class (to avoid warning C4275, see also 
+// Export an instance of the base class (to avoid warning C4275, see also
 // C++ Language Reference/General Rules and Limitations on MSDN for more details.)
 //
 // For compiler gcc4.1 we need to define the template class outside namespace 'Gui'
-// otherwise we get the compiler error: 
+// otherwise we get the compiler error:
 // 'explicit instantiation of 'class Base::Subject<const Gui::SelectionChanges&>'
 // in namespace 'Gui' (which does not enclose namespace 'Base')
-// 
+//
 // It seems that this construct is not longer needed for gcc4.4 and even leads to
 // errors under Mac OS X. Thus, we check for version between 4.1 and 4.4.
 // It seems that for Mac OS X this can be completely ignored
@@ -179,6 +179,7 @@ template class GuiExport Base::Subject<const Gui::SelectionChanges&>;
 
 namespace Gui
 {
+    class ViewProviderDocumentObject;
 
 /**
  * The SelectionObserver class simplifies the step to write classes that listen
@@ -192,6 +193,7 @@ class GuiExport SelectionObserver
 public:
     /// Constructor
     SelectionObserver(bool attach = true, int resolve = 1);
+    SelectionObserver(const Gui::ViewProviderDocumentObject *vp, bool attach=true, int resolve=1);
     virtual ~SelectionObserver();
     bool blockConnection(bool block);
     bool isConnectionBlocked() const;
@@ -204,11 +206,14 @@ public:
 
 private:
     virtual void onSelectionChanged(const SelectionChanges& msg) = 0;
+    void _onSelectionChanged(const SelectionChanges& msg);
 
 private:
     typedef boost::signals::connection Connection;
     Connection connectSelection;
     int resolve;
+    std::string filterDocName;
+    std::string filterObjName;
 };
 
 /**
@@ -263,20 +268,32 @@ public:
     std::string notAllowedReason;
 };
 
+/** SelectionGateFilterExternal
+ * The selection gate disallows any external object
+ */
+class GuiExport SelectionGateFilterExternal: public SelectionGate
+{
+public:
+    SelectionGateFilterExternal(const char *docName, const char *objName=0);
+    virtual bool allow(App::Document*,App::DocumentObject*, const char*) override;
+private:
+    std::string DocName;
+    std::string ObjName;
+};
 
 /** The Selection class
- *  The selection singleton keeps track of the selection state of 
+ *  The selection singleton keeps track of the selection state of
  *  the whole application. It gets messages from all entities which can
  *  alter the selection (e.g. tree view and 3D-view) and sends messages
- *  to entities which need to keep track on the selection state. 
- * 
- *  The selection consists mainly out of following information per selected object: 
+ *  to entities which need to keep track on the selection state.
+ *
+ *  The selection consists mainly out of following information per selected object:
  *  - document (pointer)
  *  - Object   (pointer)
  *  - list of subelements (list of strings)
  *  - 3D coordinates where the user clicks to select (Vector3d)
  *
- *  Also the preselection is managed. That means you can add a filter to prevent selection 
+ *  Also the preselection is managed. That means you can add a filter to prevent selection
  *  of unwanted objects or subelements.
  */
 class GuiExport SelectionSingleton : public Base::Subject<const SelectionChanges&>
@@ -321,19 +338,21 @@ public:
             const char* pSubName, float x=0, float y=0, float z=0, int signal=0);
     /// remove the present preselection
     void rmvPreselect();
-    /// sets different coords for the preselection 
+    /// sets different coords for the preselection
     void setPreselectCoord(float x, float y, float z);
-    /// returns the present preselection 
+    /// returns the present preselection
     const SelectionChanges& getPreselection(void) const;
     /// add a SelectionGate to control what is selectable
     void addSelectionGate(Gui::SelectionGate *gate, int resolve = 1);
     /// remove the active SelectionGate
     void rmvSelectionGate(void);
 
+    int disableCommandLog();
+    int enableCommandLog(bool silent=false);
 
     /** Returns the number of selected objects with a special object type
-     * It's the convenient way to check if the right objects are selected to 
-     * perform an operation (GuiCommand). The check also detects base types. 
+     * It's the convenient way to check if the right objects are selected to
+     * perform an operation (GuiCommand). The check also detects base types.
      * E.g. "Part" also fits on "PartImport" or "PartTransform types.
      * If no document name is given the active document is assumed.
      *
@@ -425,13 +444,14 @@ public:
     bool hasSelection(const char* doc, bool resolve=true) const;
     bool hasPreselection() const;
 
-    /// Size of selcted entities for all documents
+    /// Size of selected entities for all documents
     unsigned int size(void) const {
         return static_cast<unsigned int>(_SelList.size());
     }
 
     int selStackBackSize() const {return _SelStackBack.size();}
     int selStackForwardSize() const {return _SelStackForward.size();}
+    std::vector<Gui::SelectionObject> selStackGet(const char* pDocName=0,int resolve=1,int index=0) const;
     void selStackGoBack(int count=1);
     void selStackGoForward(int count=1);
     void selStackPush(bool clearForward=true, bool overwrite=false);
@@ -449,28 +469,29 @@ public:
     static PyMethodDef    Methods[];
 
 protected:
-    static PyObject *sAddSelection        (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sUpdateSelection     (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sRemoveSelection     (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sClearSelection      (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sIsSelected          (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sCountObjectsOfType  (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sGetSelection        (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sGetPreselection     (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sRemPreselection     (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sGetCompleteSelection(PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sGetSelectionEx      (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sGetSelectionObject  (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sAddSelObserver      (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sRemSelObserver      (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sAddSelectionGate    (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sRemoveSelectionGate (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sGetPickedList       (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sEnablePickedList    (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sPreselect           (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sSetVisible          (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sPushSelStack        (PyObject *self,PyObject *args,PyObject *kwd);
-    static PyObject *sHasSelection        (PyObject *self,PyObject *args,PyObject *kwd);
+    static PyObject *sAddSelection        (PyObject *self,PyObject *args);
+    static PyObject *sUpdateSelection     (PyObject *self,PyObject *args);
+    static PyObject *sRemoveSelection     (PyObject *self,PyObject *args);
+    static PyObject *sClearSelection      (PyObject *self,PyObject *args);
+    static PyObject *sIsSelected          (PyObject *self,PyObject *args);
+    static PyObject *sCountObjectsOfType  (PyObject *self,PyObject *args);
+    static PyObject *sGetSelection        (PyObject *self,PyObject *args);
+    static PyObject *sGetPreselection     (PyObject *self,PyObject *args);
+    static PyObject *sRemPreselection     (PyObject *self,PyObject *args);
+    static PyObject *sGetCompleteSelection(PyObject *self,PyObject *args);
+    static PyObject *sGetSelectionEx      (PyObject *self,PyObject *args);
+    static PyObject *sGetSelectionObject  (PyObject *self,PyObject *args);
+    static PyObject *sAddSelObserver      (PyObject *self,PyObject *args);
+    static PyObject *sRemSelObserver      (PyObject *self,PyObject *args);
+    static PyObject *sAddSelectionGate    (PyObject *self,PyObject *args);
+    static PyObject *sRemoveSelectionGate (PyObject *self,PyObject *args);
+    static PyObject *sGetPickedList       (PyObject *self,PyObject *args);
+    static PyObject *sEnablePickedList    (PyObject *self,PyObject *args);
+    static PyObject *sPreselect           (PyObject *self,PyObject *args);
+    static PyObject *sSetVisible          (PyObject *self,PyObject *args);
+    static PyObject *sPushSelStack        (PyObject *self,PyObject *args);
+    static PyObject *sHasSelection        (PyObject *self,PyObject *args);
+    static PyObject *sGetSelectionFromStack(PyObject *self,PyObject *args);
 
 protected:
     /// Construction
@@ -496,9 +517,12 @@ protected:
         App::Document* pDoc;
         App::DocumentObject* pObject;
         float x,y,z;
+        bool logged = false;
 
         std::pair<std::string,std::string> elementName;
         App::DocumentObject* pResolvedObject = 0;
+
+        void log(bool remove=false);
     };
     mutable std::list<_SelObj> _SelList;
 
@@ -510,7 +534,7 @@ protected:
     std::deque<SelStackItem> _SelStackForward;
 
     int checkSelection(const char *pDocName, const char *pObjectName, 
-            const char *pSubName,int resolve, _SelObj &sel) const;
+            const char *pSubName,int resolve, _SelObj &sel, const std::list<_SelObj> *selList=0) const;
 
     std::vector<Gui::SelectionObject> getObjectList(const char* pDocName,Base::Type typeId, std::list<_SelObj> &objs, int resolve, bool single=false) const;
 
@@ -526,6 +550,9 @@ protected:
 
     Gui::SelectionGate *ActiveGate;
     int gateResolve;
+
+    int logDisabled = 0;
+    bool logHasSelection = false;
 };
 
 /**
@@ -547,6 +574,18 @@ inline SelectionSingleton& Selection(void)
 {
     return SelectionSingleton::instance();
 }
+
+class GuiExport SelectionLogDisabler {
+public:
+    SelectionLogDisabler(bool silent=false) :silent(silent) {
+        Selection().disableCommandLog();
+    }
+    ~SelectionLogDisabler() {
+        Selection().enableCommandLog(silent);
+    }
+private:
+    bool silent;
+};
 
 } //namespace Gui
 

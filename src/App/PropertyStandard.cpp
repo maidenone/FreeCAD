@@ -382,6 +382,11 @@ const char ** PropertyEnumeration::getEnums(void) const
     return _enum.getEnums();
 }
 
+bool PropertyEnumeration::isValid(void) const
+{
+    return _enum.isValid();
+}
+
 void PropertyEnumeration::Save(Base::Writer &writer) const
 {
     writer.Stream() << writer.ind() << "<Integer value=\"" <<  _enum.getInt() <<"\"";
@@ -1268,7 +1273,7 @@ void PropertyFloatList::Restore(Base::XMLReader &reader)
     string file (reader.getAttribute("file") );
 
     if (!file.empty()) {
-        // initate a file read
+        // initiate a file read
         reader.addFile(file.c_str(),this);
     }
 }
@@ -1353,15 +1358,30 @@ void PropertyString::setValue(const char* newLabel)
     if(_cValue == newLabel)
         return;
 
+    std::string _newLabel;
+
     std::vector<std::pair<PropertyXLink*,std::string> > linkChange;
     std::string label;
     auto obj = dynamic_cast<DocumentObject*>(getContainer());
     bool commit = false;
 
-    if(!GetApplication().isRestoring() && 
-       obj && obj->getNameInDocument() && this==&obj->Label &&
+    if(obj && obj->getNameInDocument() && this==&obj->Label &&
+       (!obj->getDocument()->testStatus(App::Document::Restoring)||
+        obj->getDocument()->testStatus(App::Document::Importing)) && 
        !obj->getDocument()->isPerformingTransaction()) 
     {
+        const char *dot = strchr(newLabel,'.');
+        if(dot) {
+            _newLabel = newLabel;
+            for(size_t i=dot-newLabel;i<_newLabel.size();++i) {
+                if(_newLabel[i]=='.')
+                    _newLabel[i] = '_';
+            }
+            if(_cValue == _newLabel)
+                return;
+            newLabel = _newLabel.c_str();
+        }
+
         // allow object to control label change
 
         static ParameterGrp::handle _hPGrp;
@@ -1408,7 +1428,13 @@ void PropertyString::setValue(const char* newLabel)
             label = newLabel;
         obj->onBeforeChangeLabel(label);
         newLabel = label.c_str();
-        linkChange = PropertyXLink::updateLabel(obj,newLabel);
+
+        if(!obj->getDocument()->testStatus(App::Document::Restoring)) {
+            // TODO: Here can only mean that we are importing. We don't support
+            // linked lable auto correction on import yet. Is this ever going to
+            // be possible?
+            linkChange = PropertyXLink::updateLabel(obj,newLabel);
+        }
 
         if(linkChange.size() && 
            !obj->getDocument()->hasPendingTransaction() &&
@@ -1479,16 +1505,22 @@ void PropertyString::Save (Base::Writer &writer) const
 {
     std::string val;
     auto obj = dynamic_cast<DocumentObject*>(getContainer());
+    writer.Stream() << writer.ind() << "<String ";
+    bool exported = false;
     if(obj && obj->getNameInDocument() && 
-       obj->isExporting() && 
-       &obj->Label==this && 
-       !obj->allowDuplicateLabel() &&
-       _cValue==obj->getNameInDocument())
+       obj->isExporting() && &obj->Label==this)
     {
-        val = encodeAttribute(obj->getExportName());
-    }else
+        if(obj->allowDuplicateLabel())
+            writer.Stream() <<"restore=\"1\" ";
+        else if(_cValue==obj->getNameInDocument()) {
+            writer.Stream() <<"restore=\"0\" ";
+            val = encodeAttribute(obj->getExportName());
+            exported = true;
+        }
+    }
+    if(!exported)
         val = encodeAttribute(_cValue);
-    writer.Stream() << writer.ind() << "<String value=\"" << val <<"\"/>" << std::endl;
+    writer.Stream() <<"value=\"" << val <<"\"/>" << std::endl;
 }
 
 void PropertyString::Restore(Base::XMLReader &reader)
@@ -1497,9 +1529,18 @@ void PropertyString::Restore(Base::XMLReader &reader)
     reader.readElement("String");
     // get the value of my Attribute
     auto obj = dynamic_cast<DocumentObject*>(getContainer());
-    if(obj && &obj->Label==this)
-        setValue(reader.getName(reader.getAttribute("value")));
-    else
+    if(obj && &obj->Label==this) {
+        if(reader.hasAttribute("restore")) {
+            int restore = reader.getAttributeAsInteger("restore");
+            if(restore == 1) {
+                aboutToSetValue();
+                _cValue = reader.getAttribute("value");
+                hasSetValue();
+            }else
+                setValue(reader.getName(reader.getAttribute("value")));
+        } else
+            setValue(reader.getAttribute("value"));
+    }else
         setValue(reader.getAttribute("value"));
 }
 
@@ -1520,9 +1561,21 @@ unsigned int PropertyString::getMemSize (void) const
     return static_cast<unsigned int>(_cValue.size());
 }
 
-void PropertyString::setPathValue(const ObjectIdentifier &path, const boost::any & /*value*/)
+void PropertyString::setPathValue(const ObjectIdentifier &path, const boost::any &value)
 {
     verifyPath(path);
+    if (value.type() == typeid(bool))
+        setValue(boost::any_cast<bool>(value)?"True":"False");
+    else if (value.type() == typeid(int))
+        setValue(std::to_string(boost::any_cast<int>(value)));
+    else if (value.type() == typeid(double))
+        setValue(std::to_string(boost::math::round(boost::any_cast<double>(value))));
+    else if (value.type() == typeid(Quantity))
+        setValue(boost::any_cast<Quantity>(value).getUserString().toUtf8().constData());
+    else if (value.type() == typeid(std::string))
+        setValue(boost::any_cast<std::string>(value));
+    else if (value.type() == typeid(Py::Object))
+        setValue(boost::any_cast<Py::Object>(value).as_string());
 }
 
 const boost::any PropertyString::getPathValue(const ObjectIdentifier &path) const
@@ -2423,7 +2476,7 @@ void PropertyColorList::Restore(Base::XMLReader &reader)
         std::string file (reader.getAttribute("file"));
 
         if (!file.empty()) {
-            // initate a file read
+            // initiate a file read
             reader.addFile(file.c_str(),this);
         }
     }
@@ -2663,7 +2716,7 @@ void PropertyMaterialList::Restore(Base::XMLReader &reader)
         std::string file(reader.getAttribute("file"));
 
         if (!file.empty()) {
-            // initate a file read
+            // initiate a file read
             reader.addFile(file.c_str(), this);
         }
     }

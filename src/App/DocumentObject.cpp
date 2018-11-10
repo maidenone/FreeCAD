@@ -61,6 +61,8 @@ DocumentObject::DocumentObject(void)
 {
     // define Label of type 'Output' to avoid being marked as touched after relabeling
     ADD_PROPERTY_TYPE(Label,("Unnamed"),"Base",Prop_Output,"User name of the object (UTF8)");
+    ADD_PROPERTY_TYPE(Label2,(""),"Base",Prop_None,"User description of the object (UTF8)");
+    Label2.setStatus(App::Property::Output,true);
     ADD_PROPERTY_TYPE(ExpressionEngine,(),"Base",Prop_Hidden,"Property expressions");
 
     ADD_PROPERTY(Visibility, (true));
@@ -192,31 +194,26 @@ const char* DocumentObject::detachFromDocument()
     return name ? name->c_str() : 0;
 }
 
-std::vector<DocumentObject*> DocumentObject::getOutList(bool noExpression, bool noHidden) const
+std::vector<DocumentObject*> DocumentObject::getOutList(int options) const
 {
+    if(_outListCached && !options)
+        return _outList;
     std::vector<DocumentObject*> ret;
-    if(_outListCached && !noHidden)
-        ret = _outList;
-    else {
-        std::vector<Property*> props;
-        getPropertyList(props);
-        for(auto prop : props) {
-            auto link = dynamic_cast<PropertyLinkBase*>(prop);
-            if(link) {
-                link->getLinks(ret,noHidden);
-                continue;
-            }
-        }
-        if(!noHidden) {
-            _outList = ret;
-            _outListCached = true;
-        }
+    std::vector<Property*> props;
+    getPropertyList(props);
+    bool noHidden = !!(options & OutListNoHidden);
+    bool noXLinked = !!(options & OutListNoXLinked);
+    for(auto prop : props) {
+        auto link = dynamic_cast<PropertyLinkBase*>(prop);
+        if(link && (!noXLinked || !prop->isDerivedFrom(PropertyXLink::getClassTypeId())))
+            link->getLinks(ret,noHidden);
     }
-
-    // Get document objects that this document object relies on
-    if(!noExpression)
+    if(!(options & OutListNoExpression))
         ExpressionEngine.getDocumentObjectDeps(ret);
-
+    if(!options) {
+        _outList = ret;
+        _outListCached = true;
+    }
     return ret;
 }
 
@@ -257,6 +254,8 @@ std::vector<App::DocumentObject*> DocumentObject::getInList(void) const
 #endif // if USE_OLD_DAG
 
 
+#if 0
+
 void _getInListRecursive(std::vector<DocumentObject*>& objSet, const DocumentObject* obj, const DocumentObject* checkObj, int depth)
 {
     for (const auto objIt : obj->getInList()){
@@ -289,6 +288,23 @@ std::vector<App::DocumentObject*> DocumentObject::getInListRecursive(void) const
 
     return result;
 }
+
+#else
+// The original algorithm is highly inefficient in some special case.
+// Considering an object is linked by every other objects. After exculding this
+// object, there is another object linked by every other of the remaining
+// objects, and so on.  The vector 'result' above will be of magnitude n^2.
+// Even if we replace the vector with a set, we still need to visit that amount
+// of objects. And this may not be the worst case. getInListEx() has no such
+// problem.
+
+std::vector<App::DocumentObject*> DocumentObject::getInListRecursive(void) const {
+    std::set<App::DocumentObject*> res;
+    getInListEx(res,true);
+    return std::vector<App::DocumentObject*>(res.begin(),res.end());
+}
+
+#endif
 
 // More efficient algorithm to find the recursive inList of an object,
 // including possible external parents.  One shortcoming of this algorithm is
@@ -541,7 +557,8 @@ void DocumentObject::onChanged(const Property* prop)
     // if (_pDoc)
     //     _pDoc->onChangedProperty(this,prop);
 
-    if(dynamic_cast<const PropertyLinkBase*>(prop)) {
+    if(prop == &ExpressionEngine || 
+       prop->isDerivedFrom(PropertyLinkBase::getClassTypeId())) {
         _outList.clear();
         _outListMap.clear();
         _outListCached = false;
@@ -585,7 +602,7 @@ DocumentObject *DocumentObject::getSubObject(const char *subname,
         ret = const_cast<DocumentObject*>(this);
     }else if(subname[0]=='$') {
         name = std::string(subname+1,dot);
-        for(auto obj : getOutList(true)) {
+        for(auto obj : getOutList(OutListNoExpression)) {
             if(name == obj->Label.getValue()) {
                 ret = obj;
                 break;
@@ -594,7 +611,7 @@ DocumentObject *DocumentObject::getSubObject(const char *subname,
     }else{
         name = std::string(subname,dot);
         if(!_outListCached)
-            getOutList(true);
+            getOutList(OutListNoExpression);
         if(_outList.size()!=_outListMap.size()) {
             _outListMap.clear();
             for(auto obj : _outList)
@@ -626,8 +643,37 @@ std::vector<std::string> DocumentObject::getSubObjects(int reason) const {
         if(ext->extensionGetSubObjects(ret,reason))
             return ret;
     }
-    // for(auto obj : getOutList(true))
-    //     ret.push_back(obj->getNameInDocument());
+    return ret;
+}
+
+std::map<App::DocumentObject *,std::string> DocumentObject::getParents(int depth) const {
+    std::map<App::DocumentObject *,std::string> ret;
+    if(!getNameInDocument())
+        return ret;
+    GetApplication().checkLinkDepth(depth);
+    std::string name(getNameInDocument());
+    name += ".";
+    for(auto parent : getInList()) {
+        if(!parent || !parent->getNameInDocument())
+            continue;
+        if(!parent->hasChildElement() && 
+           !parent->hasExtension(GeoFeatureGroupExtension::getExtensionClassTypeId()))
+            continue;
+        if(!parent->getSubObject(name.c_str()))
+            continue;
+
+        auto links = GetApplication().getLinksTo(parent,true);
+        links.insert(parent);
+        for(auto parent : links) {
+            auto parents = parent->getParents(depth+1);
+            if(parents.empty()) {
+                ret.emplace(parent,name);
+                continue;
+            }
+            for(auto &v : parents)
+                ret.emplace(v.first,v.second+name);
+        }
+    }
     return ret;
 }
 
@@ -729,6 +775,8 @@ void DocumentObject::connectRelabelSignals()
                                          &ExpressionEngine, _1));
         }
 
+        // Is below still necessary since we now have PropertyExpressionEngine::breakDependency()?
+#if 0
         // Connect to signalDeletedObject, to properly track deletion of other objects
         // that might be referenced in an expression
         if (!onDeletedObjectConnection.connected()) {
@@ -736,6 +784,7 @@ void DocumentObject::connectRelabelSignals()
                     .connect(boost::bind(&PropertyExpressionEngine::slotObjectDeleted,
                                          &ExpressionEngine, _1));
         }
+#endif
 
         try {
             // Crude method to resolve all expression dependencies
@@ -933,45 +982,46 @@ DocumentObject *DocumentObject::resolveRelativeLink(std::string &subname,
         return ret;
     }
 
-    auto target = link;
     size_t pos=0,linkPos=0;
-    while(1) {
-        pos = subname.find('.',pos);
-        if(pos == std::string::npos)
-            return 0;
-        ++pos;
-        auto ssub = subname.substr(0,pos);
+    std::string linkssub,ssub;
+    do {
         linkPos = linkSub.find('.',linkPos);
-        if(linkPos == std::string::npos)
+        if(linkPos == std::string::npos) {
+            link = 0;
             return 0;
+        }
         ++linkPos;
-        auto linkssub = linkSub.substr(0,linkPos);
-        if(linkssub==ssub)
-            continue;
-        ret = getSubObject(ssub.c_str());
-        if(!ret)
+        pos = subname.find('.',pos);
+        if(pos == std::string::npos) {
+            subname.clear();
+            ret = 0;
+            break;
+        }
+        ++pos;
+    }while(subname.compare(0,pos,linkSub,0,linkPos)==0);
+
+    if(pos != std::string::npos) {
+        ret = getSubObject(subname.substr(0,pos).c_str());
+        if(!ret) {
+            link = 0;
             return 0;
-        target = link->getSubObject(linkssub.c_str());
-        if(!target)
-            return 0;
-        subname = subname.substr(ssub.size());
-        link = target;
-        linkSub = linkSub.substr(linkssub.size());
-        return ret;
+        }
+        subname = subname.substr(pos);
     }
+    if(linkPos) {
+        link = link->getSubObject(linkSub.substr(0,linkPos).c_str());
+        if(!link)
+            return 0;
+        linkSub = linkSub.substr(linkPos);
+    }
+    return ret;
 }
 
-std::string DocumentObject::getElementMapVersion(const App::Property *_prop) const {
+std::string DocumentObject::getElementMapVersion(const App::Property *_prop, bool restored) const {
     auto prop = dynamic_cast<const PropertyComplexGeoData*>(_prop);
-    if(!prop || !prop->getComplexData()) 
+    if(!prop) 
         return std::string();
-    std::ostringstream ss;
-    if(getDocument() && getDocument()->Hasher==prop->getComplexData()->Hasher)
-        ss << "1.";
-    else
-        ss << "0.";
-    ss << prop->getComplexData()->getElementMapVersion();
-    return ss.str();
+    return prop->getElementMapVersion(restored);
 }
 
 const std::string &DocumentObject::hiddenMarker() {

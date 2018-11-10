@@ -42,6 +42,7 @@
 #include <deque>
 #include <algorithm>
 #include "Expression.h"
+#include "ExpressionParser.h"
 #include <Base/Unit.h>
 #include <App/PropertyUnits.h>
 #include <App/ObjectIdentifier.h>
@@ -1351,6 +1352,16 @@ const Property * VariableExpression::getProperty() const
         throw Expression::Exception(var.resolveErrorString().c_str());
 }
 
+App::DocumentObject * VariableExpression::getDocumentObject() const
+{
+    auto obj = var.getDocumentObject();
+
+    if (obj)
+        return obj;
+    else
+        throw Expression::Exception(var.resolveErrorString().c_str());
+}
+
 /**
   * Evaluate the expression. For a VariableExpression, this means to return the
   * value of the referenced Property. Quantities are converted to NumberExpression with unit,
@@ -1362,13 +1373,7 @@ const Property * VariableExpression::getProperty() const
 
 Expression * VariableExpression::eval() const
 {
-    const Property * prop = getProperty();
-    PropertyContainer * parent = prop->getContainer();
-
-    if (!parent->isDerivedFrom(App::DocumentObject::getClassTypeId()))
-        throw ExpressionError("Property must belong to a document object.");
-
-    boost::any value = prop->getPathValue(var);
+    boost::any value = var.getValue(true);
 
     if (value.type() == typeid(Quantity)) {
         Quantity qvalue = boost::any_cast<Quantity>(value);
@@ -1415,6 +1420,9 @@ Expression * VariableExpression::eval() const
 
         return new StringExpression(owner, svalue);
     }
+    else if (value.type() == typeid(Py::Object)) {
+        return new PyObjectExpression(owner, boost::any_cast<Py::Object>(value));
+    }
 
     throw ExpressionError("Property is of invalid type.");
 }
@@ -1456,7 +1464,7 @@ int VariableExpression::priority() const
 
 void VariableExpression::getDeps(std::set<ObjectIdentifier> &props) const
 {
-    props.insert(var);
+    var.getDeps(props);
 }
 
 void VariableExpression::setPath(const ObjectIdentifier &path)
@@ -1483,6 +1491,44 @@ bool VariableExpression::renameDocument(const std::string &oldName, const std::s
 {
     return var.renameDocument(oldName, newName);
 }
+
+//
+// PyObjectExpression class
+//
+
+TYPESYSTEM_SOURCE(App::PyObjectExpression, App::Expression);
+
+PyObjectExpression::PyObjectExpression(const DocumentObject *_owner, Py::Object obj)
+    : Expression(_owner)
+    , pyObj(obj)
+{
+}
+
+Expression * PyObjectExpression::eval() const
+{
+    return copy();
+}
+
+Expression *PyObjectExpression::simplify() const
+{
+    return copy();
+}
+
+std::string PyObjectExpression::toString() const
+{
+    return pyObj.as_string();
+}
+
+int PyObjectExpression::priority() const
+{
+    return 20;
+}
+
+Expression *PyObjectExpression::copy() const
+{
+    return new PyObjectExpression(owner, pyObj);
+}
+
 
 //
 // StringExpression class

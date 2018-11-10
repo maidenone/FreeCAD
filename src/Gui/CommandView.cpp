@@ -791,7 +791,7 @@ StdCmdToggleVisibility::StdCmdToggleVisibility()
 void StdCmdToggleVisibility::activated(int iMsg)
 {
     Q_UNUSED(iMsg); 
-    doCommand(Gui,"Gui.Selection.setVisible()");
+    Selection().setVisible(-1);
 }
 
 bool StdCmdToggleVisibility::isActive(void)
@@ -865,7 +865,7 @@ StdCmdShowSelection::StdCmdShowSelection()
 void StdCmdShowSelection::activated(int iMsg)
 {
     Q_UNUSED(iMsg); 
-    doCommand(Gui,"Gui.Selection.setVisible(True)");
+    Selection().setVisible(true);
 }
 
 bool StdCmdShowSelection::isActive(void)
@@ -892,7 +892,7 @@ StdCmdHideSelection::StdCmdHideSelection()
 void StdCmdHideSelection::activated(int iMsg)
 {
     Q_UNUSED(iMsg); 
-    doCommand(Gui,"Gui.Selection.setVisible(False)");
+    Selection().setVisible(false);
 }
 
 bool StdCmdHideSelection::isActive(void)
@@ -1384,6 +1384,7 @@ StdViewDock::StdViewDock()
     sStatusTip   = QT_TR_NOOP("Display the active view either in fullscreen, in undocked or docked mode");
     sAccel       = "V, D";
     eType        = Alter3DView;
+    bCanLog       = false;
 }
 
 void StdViewDock::activated(int iMsg)
@@ -1412,6 +1413,7 @@ StdViewUndock::StdViewUndock()
     sStatusTip   = QT_TR_NOOP("Display the active view either in fullscreen, in undocked or docked mode");
     sAccel       = "V, U";
     eType        = Alter3DView;
+    bCanLog       = false;
 }
 
 void StdViewUndock::activated(int iMsg)
@@ -1473,6 +1475,7 @@ StdViewFullscreen::StdViewFullscreen()
     sPixmap      = "view-fullscreen";
     sAccel       = "F11";
     eType        = Alter3DView;
+    bCanLog       = false;
 }
 
 void StdViewFullscreen::activated(int iMsg)
@@ -2657,20 +2660,22 @@ void StdBoxElementSelection::activated(int iMsg)
 // Std_TreeSelection
 //===========================================================================
 
-DEF_STD_CMD(StdCmdTreeSelection)
+DEF_STD_CMD(StdTreeSelection)
 
-StdCmdTreeSelection::StdCmdTreeSelection()
+StdTreeSelection::StdTreeSelection()
   : Command("Std_TreeSelection")
 {
-    sGroup        = QT_TR_NOOP("View");
+    sGroup        = QT_TR_NOOP("TreeView");
     sMenuText     = QT_TR_NOOP("Go to selection");
     sToolTipText  = QT_TR_NOOP("Scroll to first selected item");
     sWhatsThis    = "Std_TreeSelection";
     sStatusTip    = QT_TR_NOOP("Scroll to first selected item");
     eType         = Alter3DView;
+    sPixmap       = "tree-goto-sel";
+    sAccel        = "T,G";
 }
 
-void StdCmdTreeSelection::activated(int iMsg)
+void StdTreeSelection::activated(int iMsg)
 {
     Q_UNUSED(iMsg); 
     QList<TreeWidget*> tree = Gui::getMainWindow()->findChildren<TreeWidget*>();
@@ -3074,6 +3079,319 @@ bool StdCmdSelForward::isActive(void)
 {
   return !!Selection().selStackForwardSize();
 }
+
+//=======================================================================
+// Std_TreeSingleDocument
+//===========================================================================
+#define TREEVIEW_DOC_CMD_DEF(_name,_v) \
+DEF_STD_CMD_AC(StdTree##_name) \
+void StdTree##_name::activated(int){ \
+    FC_TREEPARAM_SET(DocumentMode,_v);\
+    if(_pcAction) _pcAction->setChecked(true,true);\
+}\
+Action * StdTree##_name::createAction(void) {\
+    Action *pcAction = Command::createAction();\
+    pcAction->setCheckable(true);\
+    pcAction->setIcon(QIcon());\
+    _pcAction = pcAction;\
+    isActive();\
+    return pcAction;\
+}\
+bool StdTree##_name::isActive() {\
+    bool checked = FC_TREEPARAM(DocumentMode)==_v;\
+    if(_pcAction && _pcAction->isChecked()!=checked)\
+        _pcAction->setChecked(checked,true);\
+    return true;\
+}
+        
+TREEVIEW_DOC_CMD_DEF(SingleDocument,0)
+
+StdTreeSingleDocument::StdTreeSingleDocument()
+  : Command("Std_TreeSingleDocument")
+{
+    sGroup       = QT_TR_NOOP("TreeView");
+    sMenuText    = QT_TR_NOOP("Single document");
+    sToolTipText = QT_TR_NOOP("Only display the active document in the tree view");
+    sWhatsThis   = "Std_TreeSingleDocument";
+    sStatusTip   = QT_TR_NOOP("Only display the active document in the tree view");
+    sPixmap      = "tree-doc-single";
+    eType        = 0;
+}
+
+//===========================================================================
+// Std_TreeMultiDocument
+//===========================================================================
+TREEVIEW_DOC_CMD_DEF(MultiDocument,1)
+
+StdTreeMultiDocument::StdTreeMultiDocument()
+  : Command("Std_TreeMultiDocument")
+{
+    sGroup       = QT_TR_NOOP("TreeView");
+    sMenuText    = QT_TR_NOOP("Multi document");
+    sToolTipText = QT_TR_NOOP("Display all documents in the tree view");
+    sWhatsThis   = "Std_TreeMultiDocument";
+    sStatusTip   = QT_TR_NOOP("Display all documents in the tree view");
+    sPixmap      = "tree-doc-multi";
+    eType        = 0;
+}
+
+//===========================================================================
+// Std_TreeCollapseDocument
+//===========================================================================
+TREEVIEW_DOC_CMD_DEF(CollapseDocument,2)
+
+StdTreeCollapseDocument::StdTreeCollapseDocument()
+  : Command("Std_TreeCollapseDocument")
+{
+    sGroup       = QT_TR_NOOP("TreeView");
+    sMenuText    = QT_TR_NOOP("Collapse/Expand");
+    sToolTipText = QT_TR_NOOP("Expand active document and collapse all others");
+    sWhatsThis   = "Std_TreeCollapseDocument";
+    sStatusTip   = QT_TR_NOOP("Expand active document and collapse all others");
+    sPixmap      = "tree-doc-collapse";
+    eType        = 0;
+}
+
+//===========================================================================
+// Std_TreeSyncView
+//===========================================================================
+#define TREEVIEW_CMD_DEF(_name) \
+DEF_STD_CMD_AC(StdTree##_name) \
+void StdTree##_name::activated(int){ \
+    auto checked = !FC_TREEPARAM(_name);\
+    FC_TREEPARAM_SET(_name,checked);\
+    if(_pcAction) _pcAction->setChecked(checked,true);\
+}\
+Action * StdTree##_name::createAction(void) {\
+    Action *pcAction = Command::createAction();\
+    pcAction->setCheckable(true);\
+    pcAction->setIcon(QIcon());\
+    _pcAction = pcAction;\
+    isActive();\
+    return pcAction;\
+}\
+bool StdTree##_name::isActive() {\
+    bool checked = FC_TREEPARAM(_name);\
+    if(_pcAction && _pcAction->isChecked()!=checked)\
+        _pcAction->setChecked(checked,true);\
+    return true;\
+}
+        
+TREEVIEW_CMD_DEF(SyncView)
+
+StdTreeSyncView::StdTreeSyncView()
+  : Command("Std_TreeSyncView")
+{
+    sGroup       = QT_TR_NOOP("TreeView");
+    sMenuText    = QT_TR_NOOP("Sync view");
+    sToolTipText = QT_TR_NOOP("Auto switch to the 3D view containing the selected item");
+    sStatusTip   = sToolTipText;
+    sWhatsThis   = "Std_TreeSyncView";
+    sPixmap      = "tree-sync-view";
+    sAccel       = "T,1";
+    eType        = 0;
+}
+
+//===========================================================================
+// Std_TreeSyncSelection
+//===========================================================================
+TREEVIEW_CMD_DEF(SyncSelection)
+
+StdTreeSyncSelection::StdTreeSyncSelection()
+  : Command("Std_TreeSyncSelection")
+{
+    sGroup       = QT_TR_NOOP("TreeView");
+    sMenuText    = QT_TR_NOOP("Sync selection");
+    sToolTipText = QT_TR_NOOP("Auto expand tree item when the corresponding object is selected in 3D view");
+    sStatusTip   = sToolTipText;
+    sWhatsThis   = "Std_TreeSyncSelection";
+    sPixmap      = "tree-sync-sel";
+    sAccel       = "T,2";
+    eType        = 0;
+}
+
+//===========================================================================
+// Std_TreeSyncPlacement
+//===========================================================================
+TREEVIEW_CMD_DEF(SyncPlacement)
+
+StdTreeSyncPlacement::StdTreeSyncPlacement()
+  : Command("Std_TreeSyncPlacement")
+{
+    sGroup       = QT_TR_NOOP("TreeView");
+    sMenuText    = QT_TR_NOOP("Sync placement");
+    sToolTipText = QT_TR_NOOP("Auto adjust placement on drag and drop objects across coordinate systems");
+    sStatusTip   = sToolTipText;
+    sWhatsThis   = "Std_TreeSyncPlacement";
+    sPixmap      = "tree-sync-pla";
+    sAccel       = "T,3";
+    eType        = 0;
+}
+
+//===========================================================================
+// Std_TreePreSelection
+//===========================================================================
+TREEVIEW_CMD_DEF(PreSelection)
+
+StdTreePreSelection::StdTreePreSelection()
+  : Command("Std_TreePreSelection")
+{
+    sGroup       = QT_TR_NOOP("TreeView");
+    sMenuText    = QT_TR_NOOP("Pre-selection");
+    sToolTipText = QT_TR_NOOP("Preselect the object in 3D view when mouse over the tree item");
+    sStatusTip   = sToolTipText;
+    sWhatsThis   = "Std_TreePreSelection";
+    sPixmap      = "tree-pre-sel";
+    sAccel       = "T,4";
+    eType        = 0;
+}
+
+//===========================================================================
+// Std_TreeRecordSelection
+//===========================================================================
+TREEVIEW_CMD_DEF(RecordSelection)
+
+StdTreeRecordSelection::StdTreeRecordSelection()
+  : Command("Std_TreeRecordSelection")
+{
+    sGroup       = QT_TR_NOOP("TreeView");
+    sMenuText    = QT_TR_NOOP("Record selection");
+    sToolTipText = QT_TR_NOOP("Record selection in tree view in order to go back/forward using navigation button");
+    sStatusTip   = sToolTipText;
+    sWhatsThis   = "Std_TreeRecordSelection";
+    sPixmap      = "tree-rec-sel";
+    sAccel       = "T,5";
+    eType        = 0;
+}
+
+//===========================================================================
+// Std_TreeDrag
+//===========================================================================
+DEF_STD_CMD(StdTreeDrag)
+
+StdTreeDrag::StdTreeDrag()
+  : Command("Std_TreeDrag")
+{
+    sGroup       = QT_TR_NOOP("TreeView");
+    sMenuText    = QT_TR_NOOP("Initiate dragging");
+    sToolTipText = QT_TR_NOOP("Initiate dragging of current selected tree items");
+    sStatusTip   = sToolTipText;
+    sWhatsThis   = "Std_TreeDrag";
+    sPixmap      = "tree-item-drag";
+    sAccel       = "T,D";
+    eType        = 0;
+}
+
+void StdTreeDrag::activated(int)
+{
+    if(Gui::Selection().hasSelection()) {
+        for(auto tree : getMainWindow()->findChildren<TreeWidget*>()) {
+            if(tree->isVisible()) {
+                tree->startDragging();
+                break;
+            }
+        }
+    }
+}
+
+//======================================================================
+// Std_TreeViewActions
+//===========================================================================
+//
+class StdCmdTreeViewActions : public Gui::Command
+{
+public:
+    StdCmdTreeViewActions();
+    virtual const char* className() const {return "StdCmdTreeViewActions";}
+protected:
+    virtual void activated(int iMsg);
+    virtual Gui::Action * createAction(void);
+
+    std::vector<std::pair<Command*,size_t> > cmds;
+};
+
+StdCmdTreeViewActions::StdCmdTreeViewActions()
+  : Command("Std_TreeViewActions")
+{
+    sGroup        = QT_TR_NOOP("View");
+    sMenuText     = QT_TR_NOOP("TreeView actions");
+    sToolTipText  = QT_TR_NOOP("TreeView behavior options and actions");
+    sWhatsThis    = "Std_TreeViewActions";
+    sStatusTip    = QT_TR_NOOP("TreeView behavior options and actions");
+    eType         = 0;
+    bCanLog       = false;
+
+    CommandManager &mgr = Application::Instance->commandManager();
+    cmds.reserve(12);
+    cmds.emplace_back(new StdTreeSyncView(),cmds.size());
+    mgr.addCommand(cmds.back().first);
+    cmds.emplace_back(new StdTreeSyncSelection(),cmds.size());
+    mgr.addCommand(cmds.back().first);
+    cmds.emplace_back(new StdTreeSyncPlacement(),cmds.size());
+    mgr.addCommand(cmds.back().first);
+    cmds.emplace_back(new StdTreePreSelection(),cmds.size());
+    mgr.addCommand(cmds.back().first);
+    cmds.emplace_back(new StdTreeRecordSelection(),cmds.size());
+    mgr.addCommand(cmds.back().first);
+
+    cmds.emplace_back(nullptr,0);
+
+    cmds.emplace_back(new StdTreeSingleDocument(),cmds.size()+1);
+    mgr.addCommand(cmds.back().first);
+    cmds.emplace_back(new StdTreeMultiDocument(),cmds.size()+1);
+    mgr.addCommand(cmds.back().first);
+    cmds.emplace_back(new StdTreeCollapseDocument(),cmds.size()-2);
+    mgr.addCommand(cmds.back().first);
+
+    cmds.emplace_back(nullptr,0);
+
+    cmds.emplace_back(new StdTreeDrag(),cmds.size());
+    mgr.addCommand(cmds.back().first);
+
+    cmds.emplace_back(new StdTreeSelection(),cmds.size());
+    mgr.addCommand(cmds.back().first);
+}
+
+Action * StdCmdTreeViewActions::createAction(void) {
+    ActionGroup* pcAction = new ActionGroup(this, getMainWindow());
+    pcAction->setDropDownMenu(true);
+    pcAction->setExclusive(false);
+    applyCommandData(this->className(), pcAction);
+    pcAction->setCheckable(true);
+
+    for(auto &v : cmds) {
+        if(!v.first)
+            pcAction->addAction(QString::fromLatin1(""))->setSeparator(true);
+        else
+            v.first->addToGroup(pcAction);
+    }
+    pcAction->setIcon(BitmapFactory().iconFromTheme(cmds[0].first->getPixmap()));
+    pcAction->setChecked(cmds[0].first->getAction()->isChecked(),true);
+
+    return pcAction;
+}
+
+void StdCmdTreeViewActions::activated(int iMsg)
+{
+    if(iMsg<0 || iMsg>=(int)cmds.size())
+        return;
+
+    auto &v = cmds[iMsg];
+    if(!v.first)
+        return;
+
+    ActionGroup* pcAction = qobject_cast<ActionGroup*>(_pcAction);
+    if(!pcAction || !pcAction->isExternalTriggered())
+        v.first->invoke(pcAction&&pcAction->isToggled()?1:0);
+
+    Action* cmdAction = v.first->getAction();
+    if(pcAction && cmdAction) {
+        pcAction->setIcon(BitmapFactory().iconFromTheme(v.first->getPixmap()));
+        pcAction->setChecked(cmdAction->isChecked(),true);
+        pcAction->setProperty("defaultAction", QVariant((int)v.second));
+    }
+}
+
 //===========================================================================
 // Instantiation
 //===========================================================================
@@ -3134,7 +3452,6 @@ void CreateViewStdCommands(void)
     rcCmdMgr.addCommand(new StdViewBoxZoom());
     rcCmdMgr.addCommand(new StdBoxSelection());
     rcCmdMgr.addCommand(new StdBoxElementSelection());
-    rcCmdMgr.addCommand(new StdCmdTreeSelection());
     rcCmdMgr.addCommand(new StdCmdTreeExpand());
     rcCmdMgr.addCommand(new StdCmdTreeCollapse());
     rcCmdMgr.addCommand(new StdCmdTreeSelectAllInstances());
@@ -3148,6 +3465,7 @@ void CreateViewStdCommands(void)
     rcCmdMgr.addCommand(new CmdViewMeasureToggleAll());
     rcCmdMgr.addCommand(new StdCmdSelBack());
     rcCmdMgr.addCommand(new StdCmdSelForward());
+    rcCmdMgr.addCommand(new StdCmdTreeViewActions());
 }
 
 } // namespace Gui

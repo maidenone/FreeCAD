@@ -67,6 +67,7 @@
 #include <Mod/TechDraw/App/DrawViewDraft.h>
 #include <Mod/TechDraw/App/DrawViewMulti.h>
 #include <Mod/TechDraw/App/DrawViewDetail.h>
+#include <Mod/TechDraw/App/DrawUtil.h>
 #include <Mod/TechDraw/Gui/QGVPage.h>
 
 #include "DrawGuiUtil.h"
@@ -264,20 +265,29 @@ void CmdTechDrawNewView::activated(int iMsg)
     if (!page) {
         return;
     }
+    std::string PageName = page->getNameInDocument();
 
-    std::vector<App::DocumentObject*> shapes = getSelection().getObjectsOfType(App::GeoFeature::getClassTypeId());
-    std::vector<App::DocumentObject*> groups = getSelection().getObjectsOfType(App::DocumentObjectGroup::getClassTypeId());
-    if ((shapes.empty()) &&
-        (groups.empty())) {
+    std::vector<App::DocumentObject*> shapes = getSelection().getObjectsOfType(App::DocumentObject::getClassTypeId());
+    if ((shapes.empty())) {
         QMessageBox::warning(Gui::getMainWindow(), QObject::tr("Wrong selection"),
             QObject::tr("Can not make a View from this selection"));
         return;
     }
-    if (!groups.empty()) {
-        shapes.insert(shapes.end(),groups.begin(),groups.end());
+
+    //set projection direction from selected Face
+    //use first object with a face selected
+    App::DocumentObject* partObj = 0;
+    std::string subName;
+    for(auto &sel : getSelection().getSelectionEx(0,App::DocumentObject::getClassTypeId(),false)) {
+        for(auto &sub : sel.getSubNames()) {
+            if (TechDraw::DrawUtil::getGeomTypeFromName(sub) == "Face") {
+                subName = sub;
+                partObj = sel.getObject();
+                break;
+            }
+        }
     }
-    
-    std::string PageName = page->getNameInDocument();
+    Base::Vector3d projDir;
 
     Gui::WaitCursor wc;
     openCommand("Create view");
@@ -290,6 +300,19 @@ void CmdTechDrawNewView::activated(int iMsg)
     }
     dvp->Source.setValues(shapes);
     doCommand(Doc,"App.activeDocument().%s.addView(App.activeDocument().%s)",PageName.c_str(),FeatName.c_str());
+    if (subName.size()) {
+        std::pair<Base::Vector3d,Base::Vector3d> dirs = DrawGuiUtil::getProjDirFromFace(partObj,subName);
+        projDir = dirs.first;
+        doCommand(Doc,"App.activeDocument().%s.Direction = FreeCAD.Vector(%.3f,%.3f,%.3f)",
+                  FeatName.c_str(), projDir.x,projDir.y,projDir.z);
+        doCommand(Doc,"App.activeDocument().%s.recompute()", FeatName.c_str());
+   } else {
+        std::pair<Base::Vector3d,Base::Vector3d> dirs = DrawGuiUtil::get3DDirAndRot();
+        projDir = dirs.first;
+        doCommand(Doc,"App.activeDocument().%s.Direction = FreeCAD.Vector(%.3f,%.3f,%.3f)",
+                  FeatName.c_str(), projDir.x,projDir.y,projDir.z);
+        doCommand(Doc,"App.activeDocument().%s.recompute()", FeatName.c_str());
+    }
     updateActive();
     commitCommand();
 }
@@ -463,21 +486,30 @@ void CmdTechDrawProjGroup::activated(int iMsg)
     if (!page) {
         return;
     }
+    std::string PageName = page->getNameInDocument();
 
-    std::vector<App::DocumentObject*> shapes = getSelection().getObjectsOfType(App::GeoFeature::getClassTypeId());
-    std::vector<App::DocumentObject*> groups = getSelection().getObjectsOfType(App::DocumentObjectGroup::getClassTypeId());
-    if ((shapes.empty()) &&
-        (groups.empty())) {
+    std::vector<App::DocumentObject*> shapes = getSelection().getObjectsOfType(App::DocumentObject::getClassTypeId());
+    if (shapes.empty()) {
         QMessageBox::warning(Gui::getMainWindow(), QObject::tr("Wrong selection"),
             QObject::tr("Can not make a ProjectionGroup from this selection"));
         return;
     }
-    if (!groups.empty()) {
-        shapes.insert(shapes.end(),groups.begin(),groups.end());
+
+    //set projection direction from selected Face
+    //use first object with a face selected
+    App::DocumentObject* partObj = 0;
+    std::string subName;
+    for(auto &sel : getSelection().getSelectionEx(0,App::DocumentObject::getClassTypeId(),false)) {
+        for(auto &sub : sel.getSubNames()) {
+            if (TechDraw::DrawUtil::getGeomTypeFromName(sub) == "Face") {
+                subName = sub;
+                partObj = sel.getObject();
+                break;
+            }
+        }
     }
 
-    std::string PageName = page->getNameInDocument();
-
+    Base::Vector3d projDir;
     Gui::WaitCursor wc;
 
     openCommand("Create Projection Group");
@@ -489,6 +521,24 @@ void CmdTechDrawProjGroup::activated(int iMsg)
     auto multiView( static_cast<TechDraw::DrawProjGroup *>(docObj) );
     multiView->Source.setValues(shapes);
 
+    if (subName.size()) {
+        std::pair<Base::Vector3d,Base::Vector3d> dirs = DrawGuiUtil::getProjDirFromFace(partObj,subName);
+        doCommand(Doc,"App.activeDocument().%s.Anchor.Direction = FreeCAD.Vector(%.3f,%.3f,%.3f)",
+                      multiViewName.c_str(), dirs.first.x,dirs.first.y,dirs.first.z);
+        doCommand(Doc,"App.activeDocument().%s.Anchor.RotationVector = FreeCAD.Vector(%.3f,%.3f,%.3f)",
+                      multiViewName.c_str(), dirs.second.x,dirs.second.y,dirs.second.z);
+        getDocument()->setStatus(App::Document::Status::SkipRecompute, false);
+        doCommand(Doc,"App.activeDocument().%s.Anchor.recompute()", multiViewName.c_str());
+    } else {
+        std::pair<Base::Vector3d,Base::Vector3d> dirs = DrawGuiUtil::get3DDirAndRot();
+        getDocument()->setStatus(App::Document::Status::SkipRecompute, true);
+        doCommand(Doc,"App.activeDocument().%s.Anchor.Direction = FreeCAD.Vector(%.3f,%.3f,%.3f)",
+                      multiViewName.c_str(), dirs.first.x,dirs.first.y,dirs.first.z);
+        doCommand(Doc,"App.activeDocument().%s.Anchor.RotationVector = FreeCAD.Vector(%.3f,%.3f,%.3f)",
+                      multiViewName.c_str(), dirs.second.x,dirs.second.y,dirs.second.z);
+        getDocument()->setStatus(App::Document::Status::SkipRecompute, false);
+        doCommand(Doc,"App.activeDocument().%s.Anchor.recompute()", multiViewName.c_str());
+    }
     //updateActive();    //exec all pending actions, but there's nothing to do here.
     commitCommand();   //write the undo
 

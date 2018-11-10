@@ -76,6 +76,7 @@
 # include <Inventor/VRMLnodes/SoVRMLGroup.h>
 # include <Inventor/nodes/SoPickStyle.h>
 # include <Inventor/nodes/SoTransparencyType.h>
+# include <Inventor/SoEventManager.h>
 # include <QEventLoop>
 # include <QKeyEvent>
 # include <QWheelEvent>
@@ -252,7 +253,7 @@ public:
         }
 #endif
 
-        // Bug #0000607: Some mices also support horizontal scrolling which however might
+        // Bug #0000607: Some mice also support horizontal scrolling which however might
         // lead to some unwanted zooming when pressing the MMB for panning.
         // Thus, we filter out horizontal scrolling.
         if (event->type() == QEvent::Wheel) {
@@ -341,7 +342,7 @@ public:
 // *************************************************************************
 
 View3DInventorViewer::View3DInventorViewer(QWidget* parent, const QtGLWidget* sharewidget)
-    : Quarter::SoQTQuarterAdaptor(parent, sharewidget), SelectionObserver(false,false),
+    : Quarter::SoQTQuarterAdaptor(parent, sharewidget), SelectionObserver(false,0),
       editViewProvider(0), navigation(0),
       renderType(Native), framebuffer(0), axisCross(0), axisGroup(0), editing(false), redirected(false),
       allowredir(false), overrideMode("As Is"), _viewerPy(0)
@@ -350,7 +351,7 @@ View3DInventorViewer::View3DInventorViewer(QWidget* parent, const QtGLWidget* sh
 }
 
 View3DInventorViewer::View3DInventorViewer(const QtGLFormat& format, QWidget* parent, const QtGLWidget* sharewidget)
-    : Quarter::SoQTQuarterAdaptor(format, parent, sharewidget), SelectionObserver(false,false),
+    : Quarter::SoQTQuarterAdaptor(format, parent, sharewidget), SelectionObserver(false,0),
       editViewProvider(0), navigation(0),
       renderType(Native), framebuffer(0), axisCross(0), axisGroup(0), editing(false), redirected(false),
       allowredir(false), overrideMode("As Is"), _viewerPy(0)
@@ -506,6 +507,7 @@ void View3DInventorViewer::init()
     pcEditingTransform = new SoTransform;
     pcEditingTransform->ref();
     restoreEditingRoot = false;
+    pcEditingRoot->addChild(pcEditingTransform);
     pcViewProviderRoot->addChild(pcEditingRoot);
 
     // Set our own render action which show a bounding box if
@@ -600,6 +602,11 @@ View3DInventorViewer::~View3DInventorViewer()
     setSceneGraph(0);
     this->pEventCallback->unref();
     this->pEventCallback = 0;
+    // Note: It can happen that there is still someone who references
+    // the root node but isn't destroyed when closing this viewer so
+    // that it prevents all children from being deleted. To reduce this
+    // likelihood we explicitly remove all child nodes now.
+    this->pcViewProviderRoot->removeAllChildren();
     this->pcViewProviderRoot->unref();
     this->pcViewProviderRoot = 0;
     this->backlight->unref();
@@ -627,6 +634,14 @@ View3DInventorViewer::~View3DInventorViewer()
         static_cast<View3DInventorViewerPy*>(_viewerPy)->_viewer = 0;
         Py_DECREF(_viewerPy);
     }
+
+    // In the init() function we have overridden the default SoGLRenderAction with our
+    // own instance of SoBoxSelectionRenderAction and SoRenderManager destroyed the default.
+    // But it does this only once so that now we have to explicitly destroy our instance in
+    // order to free the memory.
+    SoGLRenderAction* glAction = this->getSoRenderManager()->getGLRenderAction();
+    this->getSoRenderManager()->setGLRenderAction(nullptr);
+    delete glAction;
 }
 
 void View3DInventorViewer::aboutToDestroyGLContext()
@@ -965,7 +980,6 @@ void View3DInventorViewer::setupEditingRoot(SoNode *node, const Base::Matrix4D *
     if(!editViewProvider) 
         return;
     resetEditingRoot(false);
-    pcEditingRoot->addChild(pcEditingTransform);
     if(mat)
         setEditingTransform(*mat);
     else
@@ -987,10 +1001,10 @@ void View3DInventorViewer::setupEditingRoot(SoNode *node, const Base::Matrix4D *
 }
 
 void View3DInventorViewer::resetEditingRoot(bool updateLinks) {
-    if(!editViewProvider || !pcEditingRoot->getNumChildren())
+    if(!editViewProvider || pcEditingRoot->getNumChildren()<=1)
         return;
     if(!restoreEditingRoot) {
-        pcEditingRoot->removeAllChildren();
+        pcEditingRoot->getChildren()->truncate(1);
         return;
     }
     restoreEditingRoot = false;
@@ -998,12 +1012,9 @@ void View3DInventorViewer::resetEditingRoot(bool updateLinks) {
     if(root->getNumChildren()) 
         FC_ERR("WARNING!!! Editing view provider root node is tampered");
     root->addChild(editViewProvider->getTransformNode());
-    for(int i=0,count=pcEditingRoot->getNumChildren();i<count;++i) {
-        SoNode *node = pcEditingRoot->getChild(i);
-        if(node != pcEditingTransform)
-            root->addChild(node);
-    }
-    pcEditingRoot->removeAllChildren();
+    for(int i=1,count=pcEditingRoot->getNumChildren();i<count;++i)
+        root->addChild(pcEditingRoot->getChild(i));
+    pcEditingRoot->getChildren()->truncate(1);
     if(updateLinks)
         ViewProviderLink::updateLinks(editViewProvider);
 }
@@ -1011,7 +1022,7 @@ void View3DInventorViewer::resetEditingRoot(bool updateLinks) {
 SoPickedPoint* View3DInventorViewer::getPointOnRay(const SbVec2s& pos, ViewProvider* vp) const
 {
     SoPath *path;
-    if(vp == editViewProvider && pcEditingRoot->getNumChildren()) {
+    if(vp == editViewProvider && pcEditingRoot->getNumChildren()>1) {
         path = new SoPath(1);
         path->ref();
         path->append(pcEditingRoot);
@@ -1060,7 +1071,7 @@ SoPickedPoint* View3DInventorViewer::getPointOnRay(const SbVec3f& pos,const SbVe
     // to fail to get intersections between the ray and a line
     
     SoPath *path;
-    if(vp == editViewProvider && pcEditingRoot->getNumChildren()) {
+    if(vp == editViewProvider && pcEditingRoot->getNumChildren()>1) {
         path = new SoPath(1);
         path->ref();
         path->append(pcEditingRoot);
@@ -1116,6 +1127,11 @@ void View3DInventorViewer::setEditingViewProvider(Gui::ViewProvider* p, int ModN
 void View3DInventorViewer::resetEditingViewProvider()
 {
     if (!this->editViewProvider) return;
+
+    SoEventManager* mgr = getSoEventManager();
+    SoHandleEventAction* heaction = mgr->getHandleEventAction();
+    if (heaction && heaction->getGrabber())
+        heaction->releaseGrabber();
 
     resetEditingRoot();
 
@@ -3287,16 +3303,16 @@ void View3DInventorViewer::removeEventCallback(SoType eventtype, SoEventCallback
 
 ViewProvider* View3DInventorViewer::getViewProviderByPath(SoPath* path) const
 {
-    // FIXME Use the viewprovider map introduced for the selection
-    for (std::set<ViewProvider*>::const_iterator it = _ViewProviderSet.begin(); it != _ViewProviderSet.end(); ++it) {
-        for (int i = 0; i<path->getLength(); i++) {
-            SoNode* node = path->getNode(i);
-            if ((*it)->getRoot() == node) {
-                return (*it);
+    for (int i = 0; i < path->getLength(); i++) {
+        SoNode* node = path->getNode(i);
+
+        if (node->isOfType(SoSeparator::getClassTypeId())) {
+            auto it = _ViewProviderMap.find(static_cast<SoSeparator*>(node));
+            if (it != _ViewProviderMap.end()) {
+                return it->second;
             }
         }
     }
-
     return 0;
 }
 

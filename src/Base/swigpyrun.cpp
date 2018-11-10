@@ -24,6 +24,9 @@
 #include "PreCompiled.h"
 #include "PyExport.h"
 #include "Exception.h"
+#include "Console.h"
+FC_LOG_LEVEL_INIT("swig")
+
 #if (defined(HAVE_SWIG) && (HAVE_SWIG == 1))
 #if defined(__clang__)
 # pragma clang diagnostic push
@@ -31,6 +34,9 @@
 #elif defined (__GNUC__)
 # pragma GCC diagnostic push
 # pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+# if __GNUC__ >= 8
+# pragma GCC diagnostic ignored "-Wcast-function-type"
+# endif
 #endif
 namespace Swig_python {
 #define SWIG_PYTHON_NO_BUILD_NONE

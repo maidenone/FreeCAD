@@ -50,10 +50,8 @@ FC_LOG_LEVEL_INIT("CommandLink",true,true);
 using namespace Gui;
 
 static void setLinkLabel(App::DocumentObject *obj, const char *doc, const char *name) {
-    auto linked = obj->getLinkedObject(true);
-    if(!linked) linked = obj;
-    const char *label = linked->Label.getValue();
-    Command::doCommand(Command::Doc,"App.getDocument('%s').getObject('%s').Label='%s_%s'",doc,name,name,label);
+    const char *label = obj->Label.getValue();
+    Command::doCommand(Command::Doc,"App.getDocument('%s').getObject('%s').Label='%s'",doc,name,label);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////
@@ -709,7 +707,7 @@ StdCmdLinkSelectLinked::StdCmdLinkSelectLinked()
     sAccel        = "S, G";
 }
 
-static App::DocumentObject *getSelectedLink(bool finalLink) {
+static App::DocumentObject *getSelectedLink(bool finalLink, std::string *subname=0) {
     const auto &sels = Selection().getSelection("*",0,true);
     if(sels.empty())
         return 0;
@@ -733,8 +731,24 @@ static App::DocumentObject *getSelectedLink(bool finalLink) {
                 return linked;
             }
         }
-        if(!finalLink && sobj->getDocument()!=sels[0].pObject->getDocument())
+        if(sobj->getDocument()!=sels[0].pObject->getDocument()) {
+            if(finalLink)
+                return sobj;
+            for(const char *dot=strchr(sels[0].SubName,'.');dot;dot=strchr(dot+1,'.')) {
+                std::string sub(sels[0].SubName,dot+1-sels[0].SubName);
+                auto obj = sels[0].pObject->getSubObject(sub.c_str());
+                if(!obj)
+                    return 0;
+                obj = obj->getLinkedObject(true);
+                if(obj->getDocument()!=sels[0].pObject->getDocument()) {
+                    if(subname) {
+                        *subname = std::string(dot+1);
+                        return obj;
+                    }
+                }
+            }
             return sobj;
+        }
         return 0;
     }
 
@@ -753,15 +767,25 @@ bool StdCmdLinkSelectLinked::isActive() {
 
 void StdCmdLinkSelectLinked::activated(int)
 {
-    auto linked = getSelectedLink(false);
+    std::string subname;
+    auto linked = getSelectedLink(false,&subname);
     if(!linked){
         FC_WARN("invalid selection");
         return;
     }
     Selection().selStackPush();
     Selection().clearCompleteSelection();
-    for(auto tree : getMainWindow()->findChildren<TreeWidget*>())
-        tree->selectLinkedObject(linked);
+    if(subname.size()) {
+        Selection().addSelection(linked->getDocument()->getName(),linked->getNameInDocument(),subname.c_str());
+        auto doc = Application::Instance->getDocument(linked->getDocument());
+        if(doc) {
+            auto vp = dynamic_cast<ViewProviderDocumentObject*>(Application::Instance->getViewProvider(linked));
+            doc->setActiveView(vp);
+        }
+    } else {
+        for(auto tree : getMainWindow()->findChildren<TreeWidget*>())
+            tree->selectLinkedObject(linked);
+    }
     Selection().selStackPush();
 }
 

@@ -475,6 +475,9 @@ void StdWorkbench::setupContextMenu(const char* recipient, MenuItem* item) const
 {
     if (strcmp(recipient,"View") == 0)
     {
+        createLinkMenu(item);
+        *item << "Separator";
+
         MenuItem* StdViews = new MenuItem;
         StdViews->setCommand( "Standard views" );
 
@@ -503,8 +506,6 @@ void StdWorkbench::setupContextMenu(const char* recipient, MenuItem* item) const
                   << "Std_SetAppearance" << "Std_RandomColor" << "Separator" 
                   << "Std_Cut" << "Std_Copy" << "Std_Paste" << "Std_Delete" << "Separator";
         }
-
-        createLinkMenu(item);
     }
 }
 
@@ -523,7 +524,7 @@ MenuItem* StdWorkbench::setupMenuBar() const
     file->setCommand("&File");
     *file << "Std_New" << "Std_Open" << "Separator" << "Std_CloseActiveWindow"
           << "Std_CloseAllWindows" << "Separator" << "Std_Save" << "Std_SaveAs"
-          << "Std_SaveCopy" << "Std_Revert" << "Separator" << "Std_Import" 
+          << "Std_SaveCopy" << "Std_SaveAll" << "Std_Revert" << "Separator" << "Std_Import" 
           << "Std_Export" << "Std_MergeProjects" << "Std_ProjectInfo" 
           << "Separator" << "Std_Print" << "Std_PrintPreview" << "Std_PrintPdf"
           << "Separator" << "Std_RecentFiles" << "Separator" << "Std_Quit";
@@ -581,6 +582,7 @@ MenuItem* StdWorkbench::setupMenuBar() const
           << "Std_ToggleVisibility" << "Std_ToggleNavigation"
           << "Std_SetAppearance" << "Std_RandomColor" << "Separator" 
           << "Std_Workbench" << "Std_ToolBarMenu" << "Std_DockViewMenu" << "Separator" 
+          << "Std_TreeViewActions"
           << "Std_ViewStatusBar";
 
     // Tools
@@ -650,7 +652,8 @@ ToolBarItem* StdWorkbench::setupToolBars() const
     // View
     ToolBarItem* view = new ToolBarItem( root );
     view->setCommand("View");
-    *view << "Std_ViewFitAll" << "Std_ViewFitSelection" << "Std_DrawStyle" << "Separator" << "Std_ViewAxo" << "Separator" << "Std_ViewFront"
+    *view << "Std_ViewFitAll" << "Std_ViewFitSelection" << "Std_DrawStyle" 
+          << "Separator" << "Std_TreeViewActions" << "Std_ViewAxo" << "Separator" << "Std_ViewFront"
           << "Std_ViewTop" << "Std_ViewRight" << "Separator" << "Std_ViewRear" << "Std_ViewBottom"
           << "Std_ViewLeft" << "Separator" << "Std_MeasureDistance" ;
     
@@ -696,6 +699,7 @@ DockWindowItems* StdWorkbench::setupDockWindows() const
     //Dagview through parameter.
     ParameterGrp::handle group = App::GetApplication().GetUserParameter().
           GetGroup("BaseApp")->GetGroup("Preferences")->GetGroup("DAGView");
+
     bool enabled = group->GetBool("Enabled", false);
     if (enabled)
       root->addDockWidget("Std_DAGView", Qt::RightDockWidgetArea, false, false);

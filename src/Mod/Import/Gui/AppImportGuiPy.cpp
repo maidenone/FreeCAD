@@ -360,6 +360,15 @@ public:
     virtual ~Module() {}
 
 private:
+    class Signaler {
+    public:
+        Signaler() {
+            App::GetApplication().signalStartOpenDocument();
+        }
+        ~Signaler() {
+            App::GetApplication().signalFinishOpenDocument();
+        }
+    };
     Py::Object insert(const Py::Tuple& args, const Py::Dict &kwds)
     {
         char* Name;
@@ -375,6 +384,8 @@ private:
         std::string Utf8Name = std::string(Name);
         PyMem_Free(Name);
         std::string name8bit = Part::encodeFilename(Utf8Name);
+
+        Signaler signaler;
 
         try {
             //Base::Console().Log("Insert in Part with %s",Name);
@@ -602,6 +613,7 @@ private:
                 std::vector <App::DocumentObject*> hierarchical_part;
                 for(auto obj : objs)
                     export_app_object(obj,ocaf, hierarchical_label, hierarchical_loc,hierarchical_part);
+
                 // Free Shapes must have absolute placement and not explicit
                 std::vector <TDF_Label> FreeLabels;
                 std::vector <int> part_id;
@@ -611,12 +623,12 @@ private:
                 std::vector< std::vector<App::Color> > Colors;
                 get_parts_colors(hierarchical_part,FreeLabels,part_id,Colors);
                 ocaf.reallocateFreeShape(hierarchical_part,FreeLabels,part_id,Colors);
-            }
 
 #if OCC_VERSION_HEX >= 0x070200
             // Update is not performed automatically anymore: https://tracker.dev.opencascade.org/view.php?id=28055
-            XCAFDoc_DocumentTool::ShapeTool(hDoc->Main())->UpdateAssemblies();
+                XCAFDoc_DocumentTool::ShapeTool(hDoc->Main())->UpdateAssemblies();
 #endif
+            }
 
             Base::FileInfo file(Utf8Name.c_str());
             if (file.hasExtension("stp") || file.hasExtension("step")) {
@@ -641,7 +653,7 @@ private:
                 Base::Reference<ParameterGrp> hGrp = App::GetApplication().GetUserParameter()
                     .GetGroup("BaseApp")->GetGroup("Preferences")->GetGroup("Mod/Part")->GetGroup("STEP");
 
-                makeHeader.SetName(new TCollection_HAsciiString((const Standard_CString)(Utf8Name.c_str())));
+                makeHeader.SetName(new TCollection_HAsciiString((Standard_CString)(Utf8Name.c_str())));
                 makeHeader.SetAuthorValue (1, new TCollection_HAsciiString(hGrp->GetASCII("Author", "Author").c_str()));
                 makeHeader.SetOrganizationValue (1, new TCollection_HAsciiString(hGrp->GetASCII("Company").c_str()));
                 makeHeader.SetOriginatingSystem(new TCollection_HAsciiString(App::GetApplication().getExecutableName()));

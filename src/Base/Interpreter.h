@@ -230,6 +230,7 @@ public:
     PyObject* createSWIGPointerObj(const char* Modole, const char* TypeName, void* Pointer, int own);
     bool convertSWIGPointerObj(const char* Module, const char* TypeName, PyObject* obj, void** ptr, int flags);
     void cleanupSWIG(const char* TypeName);
+    void dumpSWIG();
     //@}
 
     /** @name methods for debugging facility
@@ -255,6 +256,9 @@ public:
     //@}
 
     PyObject *getValue(const char *key, const char *result_var);
+    void addVariable(const char *key, Py::Object value);
+    void removeVariable(const char *key);
+    void removeVariables(const std::vector<std::string> &keys);
 
 protected:
     // singleton
@@ -274,6 +278,43 @@ inline InterpreterSingleton &Interpreter(void)
 {
     return InterpreterSingleton::Instance();
 }
+
+/** Python variable manager for interpreter
+ *
+ *  This class is a helper to inject global python variables into interpreter.
+ *  The variables will be auto freed in the destructor. This class is meant to
+ *  be used on stack.
+ */
+class BaseExport PythonVariables {
+public:
+    /** Constructor
+     *
+     * @param pfx: optional prefix of the variable
+     */
+    PythonVariables(const char *pfx="__pyfc_tmp")
+        :prefix(pfx)
+    {}
+
+    /** Destructor
+     *
+     * All variable added will be removed from interpreter here
+     */
+    ~PythonVariables();
+
+    /** Add a global variable to interpreter
+     *
+     * @param obj: the value assigned to the variable
+     *
+     * @return Return the variable name, which are constructed by the given
+     * prefix and a monotonically increasing index.
+     */
+    const std::string &add(Py::Object obj);
+private:
+    std::string prefix;
+    std::vector<std::string> names;
+    Base::PyGILStateLocker lock;
+};
+
 
 } //namespace Base 
 

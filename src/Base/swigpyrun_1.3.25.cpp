@@ -24,10 +24,17 @@
 #include "PreCompiled.h"
 #include "PyExport.h"
 #include "Exception.h"
+#include "Console.h"
+FC_LOG_LEVEL_INIT("swig_1_3_25")
 #if defined(__clang__)
 # pragma clang diagnostic push
 # pragma clang diagnostic ignored "-Wdeprecated-register"
 # pragma clang diagnostic ignored "-Wself-assign"
+#elif defined (__GNUC__)
+# pragma GCC diagnostic push
+# if __GNUC__ >= 8
+# pragma GCC diagnostic ignored "-Wcast-function-type"
+# endif
 #endif
 namespace Swig_1_3_25 {
 #include "swigpyrun_1.3.25.h"
@@ -35,5 +42,7 @@ namespace Swig_1_3_25 {
 }
 #if defined(__clang__)
 # pragma clang diagnostic pop
+#elif defined (__GNUC__)
+# pragma GCC diagnostic pop
 #endif
 

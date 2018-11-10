@@ -146,6 +146,7 @@ using namespace boost::program_options;
 # include <new>
 #endif
 
+FC_LOG_LEVEL_INIT("App",true,true);
 
 //using Base::GetConsole;
 using namespace Base;
@@ -185,6 +186,37 @@ PyDoc_STRVAR(Base_doc,
     "like vector, matrix, bounding box, placement, rotation, axis, ...\n"
     );
 
+#if PY_MAJOR_VERSION >= 3
+// This is called via the PyImport_AppendInittab mechanism called
+// during initialization, to make the built-in __FreeCADBase__
+// module known to Python.
+PyMODINIT_FUNC
+init_freecad_base_module(void)
+{
+    static struct PyModuleDef BaseModuleDef = {
+        PyModuleDef_HEAD_INIT,
+        "__FreeCADBase__", Base_doc, -1,
+        NULL, NULL, NULL, NULL, NULL
+    };
+    return PyModule_Create(&BaseModuleDef);
+}
+
+// Set in inside Application
+static PyMethodDef* __AppMethods = nullptr;
+
+PyMODINIT_FUNC
+init_freecad_module(void)
+{
+    static struct PyModuleDef FreeCADModuleDef = {
+        PyModuleDef_HEAD_INIT,
+        "FreeCAD", FreeCAD_doc, -1,
+        __AppMethods,
+        NULL, NULL, NULL, NULL
+    };
+    return PyModule_Create(&FreeCADModuleDef);
+}
+#endif
+
 Application::Application(std::map<std::string,std::string> &mConfig)
   : _mConfig(mConfig), _pActiveDoc(0),_allowPending(false),_isRestoring(false),_objCount(-1)
 {
@@ -196,14 +228,15 @@ Application::Application(std::map<std::string,std::string> &mConfig)
     // setting up Python binding
     Base::PyGILStateLocker lock;
 #if PY_MAJOR_VERSION >= 3
-    static struct PyModuleDef FreeCADModuleDef = {
-        PyModuleDef_HEAD_INIT,
-        "FreeCAD", FreeCAD_doc, -1,
-        Application::Methods,
-        NULL, NULL, NULL, NULL
-    };
-    PyObject* pAppModule = PyModule_Create(&FreeCADModuleDef);
-    _PyImport_FixupBuiltin(pAppModule, "FreeCAD");
+    PyObject* modules = PyImport_GetModuleDict();
+
+    __AppMethods = Application::Methods;
+    PyObject* pAppModule = PyImport_ImportModule ("FreeCAD");
+    if (!pAppModule) {
+        PyErr_Clear();
+        pAppModule = init_freecad_module();
+        PyDict_SetItemString(modules, "FreeCAD", pAppModule);
+    }
 #else
     PyObject* pAppModule = Py_InitModule3("FreeCAD", Application::Methods, FreeCAD_doc);
 #endif
@@ -239,13 +272,12 @@ Application::Application(std::map<std::string,std::string> &mConfig)
     // remove these types from the FreeCAD module.
 
 #if PY_MAJOR_VERSION >= 3
-    static struct PyModuleDef BaseModuleDef = {
-        PyModuleDef_HEAD_INIT,
-        "__FreeCADBase__", Base_doc, -1,
-        NULL, NULL, NULL, NULL, NULL
-    };
-    PyObject* pBaseModule = PyModule_Create(&BaseModuleDef);
-    _PyImport_FixupBuiltin(pBaseModule, "__FreeCADBase__");
+    PyObject* pBaseModule = PyImport_ImportModule ("__FreeCADBase__");
+    if (!pBaseModule) {
+        PyErr_Clear();
+        pBaseModule = init_freecad_base_module();
+        PyDict_SetItemString(modules, "__FreeCADBase__", pBaseModule);
+    }
 #else
     PyObject* pBaseModule = Py_InitModule3("__FreeCADBase__", NULL, Base_doc);
 #endif
@@ -469,36 +501,67 @@ std::string Application::getUniqueDocumentName(const char *Name) const
     }
 }
 
-bool Application::addPendingDocument(
-        const char *FileName, const std::vector<std::string> &objNames)
+int Application::addPendingDocument(const char *FileName, const char *objName)
 {
-    if(!_allowPending || !FileName) return false;
+    if(!_allowPending)
+        return 0;
+    assert(FileName && FileName[0]);
+    assert(objName && objName[0]);
     auto ret =  _pendingDocMap.emplace(FileName,std::set<std::string>());
-    for(auto &name : objNames)
-        ret.first->second.insert(name);
-    if(ret.second)
+    ret.first->second.emplace(objName);
+    if(ret.second) {
         _pendingDocs.push_back(ret.first->first.c_str());
-    return true;
+        return 1;
+    }
+    return -1;
 }
 
 bool Application::isRestoring() const {
     return _isRestoring || Document::isAnyRestoring();
 }
 
+struct DocTiming {
+    FC_DURATION_DECLARE(d1);
+    FC_DURATION_DECLARE(d2);
+    DocTiming() {
+        FC_DURATION_INIT(d1);
+        FC_DURATION_INIT(d2);
+    }
+};
+
+class DocOpenGuard {
+public:
+    bool &flag;
+    boost::signal<void ()> &signal;
+    DocOpenGuard(bool &f, boost::signal<void ()> &s)
+        :flag(f),signal(s)
+    {
+        flag = true;
+    }
+    ~DocOpenGuard() {
+        flag = false;
+        signal();
+    }
+};
+
 Document* Application::openDocument(const char * FileName)
 {
-    Base::FlagToggler<> flag(_isRestoring);
+    DocOpenGuard guard(_isRestoring,signalFinishOpenDocument);
     _pendingDocs.clear();
     _pendingDocsReopen.clear();
     _pendingDocMap.clear();
     _allowPending = true;
+
+    signalStartOpenDocument();
 
     ParameterGrp::handle hGrp = GetParameterGroupByPath("User parameter:BaseApp/Preferences/Document");
     bool allowPartial = !hGrp->GetBool("NoPartialLoading",false);
 
     _pendingDocs.push_back(FileName?FileName:"");
 
-    std::deque<Document *> newDocs;
+    std::deque<std::pair<Document *, DocTiming> > newDocs;
+
+    FC_TIME_INIT(t);
 
     bool isMainDoc = true;
     while(true) {
@@ -512,9 +575,12 @@ Document* Application::openDocument(const char * FileName)
                 if(it!=_pendingDocMap.end())
                     objNames.swap(it->second);
             }
+            FC_TIME_INIT(t1);
+            DocTiming timing;
             auto doc = openDocumentPrivate(name,isMainDoc,allowPartial,objNames);
+            FC_DURATION_PLUS(timing.d1,t1);
             if(doc)
-                newDocs.push_front(doc);
+                newDocs.emplace_front(doc,timing);
             isMainDoc = false;
             _objCount = -1;
         }catch(const Base::Exception &e) {
@@ -539,9 +605,21 @@ Document* Application::openDocument(const char * FileName)
     _pendingDocsReopen.clear();
     _pendingDocMap.clear();
 
-    for(auto doc : newDocs) 
-        doc->afterRestore(true);
-    return newDocs.back();
+    for(auto &v : newDocs) {
+        FC_TIME_INIT(t1);
+        v.first->afterRestore(true);
+        FC_DURATION_PLUS(v.second.d2,t1);
+    }
+    setActiveDocument(newDocs.back().first);
+
+    for(auto &v : newDocs) {
+        FC_DURATION_LOG(v.second.d1, v.first->getName() << " restore");
+        FC_DURATION_LOG(v.second.d2, v.first->getName() << " postprocess");
+    }
+    FC_TIME_LOG(t,"total");
+
+    signalFinishOpenDocument();
+    return newDocs.back().first;
 }
 
 Document* Application::openDocumentPrivate(const char * FileName, 
@@ -1515,6 +1593,7 @@ void Application::initTypes(void)
     App ::FunctionExpression        ::init();
     App ::BooleanExpression         ::init();
     App ::RangeExpression           ::init();
+    App ::PyObjectExpression        ::init();
 
     // register transaction type
     new App::TransactionProducer<TransactionDocumentObject>
@@ -1598,6 +1677,10 @@ void Application::initConfig(int argc, char ** argv)
 #   endif
 
     // init python
+#if PY_MAJOR_VERSION >= 3
+    PyImport_AppendInittab ("FreeCAD", init_freecad_module);
+    PyImport_AppendInittab ("__FreeCADBase__", init_freecad_base_module);
+#endif
     mConfig["PythonSearchPath"] = Interpreter().init(argc,argv);
 
     // Parse the options that have impact on the init process
@@ -1721,6 +1804,7 @@ void Application::initApplication(void)
     ParameterGrp::handle hGrp = App::GetApplication().GetParameterGroupByPath
        ("User parameter:BaseApp/Preferences/Units");
     UnitsApi::setSchema((UnitSystem)hGrp->GetInt("UserSchema",0));
+    UnitsApi::setDecimals(hGrp->GetInt("Decimals", Base::UnitsApi::getDecimals()));
 
 #if defined (_DEBUG)
     Console().Log("Application is built with debug information\n");
@@ -2451,7 +2535,7 @@ void Application::ExtractUserPath()
 
 #elif defined(FC_OS_WIN32)
     WCHAR szPath[MAX_PATH];
-    TCHAR dest[MAX_PATH*3];
+    char dest[MAX_PATH*3];
     // Get the default path where we can save our documents. It seems that
     // 'CSIDL_MYDOCUMENTS' doesn't work on all machines, so we use 'CSIDL_PERSONAL'
     // which does the same.
@@ -2630,12 +2714,17 @@ std::string Application::FindHomePath(const char* call)
 #elif defined (FC_OS_WIN32)
 std::string Application::FindHomePath(const char* sCall)
 {
-    // We have three ways to start this application either use one of the two executables or
-    // import the FreeCAD.pyd module from a running Python session. In the latter case the
-    // Python interpreter is already initialized.
+    // We have several ways to start this application:
+    // * use one of the two executables
+    // * import the FreeCAD.pyd module from a running Python session. In this case the
+    //   Python interpreter is already initialized.
+    // * use a custom dll that links FreeCAD core dlls and that is loaded by its host application
+    //   In this case the calling name should be set to FreeCADBase.dll or FreeCADApp.dll in order
+    //   to locate the correct home directory
     wchar_t szFileName [MAX_PATH];
-    if (Py_IsInitialized()) {
-        GetModuleFileNameW(GetModuleHandle(sCall),szFileName, MAX_PATH-1);
+    QString dll(QString::fromUtf8(sCall));
+    if (Py_IsInitialized() || dll.endsWith(QLatin1String(".dll"))) {
+        GetModuleFileNameW(GetModuleHandleA(sCall),szFileName, MAX_PATH-1);
     }
     else {
         GetModuleFileNameW(0, szFileName, MAX_PATH-1);
